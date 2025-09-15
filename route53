@@ -1,0 +1,144 @@
+terraform {
+  required_version = ">= 1.5.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = ">= 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+}
+
+############################
+# Route 53 Failover Setup  #
+############################
+
+resource "aws_route53_zone" "this" {
+  name = var.zone_name
+}
+
+# Health check for PRIMARY endpoint
+resource "aws_route53_health_check" "primary" {
+  fqdn              = var.primary_fqdn != "" ? var.primary_fqdn : null
+  ip_address        = var.primary_ip     != "" ? var.primary_ip     : null
+  port              = var.health_port
+  type              = var.health_check_type
+  resource_path     = var.health_check_type == "HTTP" || var.health_check_type == "HTTPS" ? var.health_path : null
+  failure_threshold = 3
+  request_interval  = 30
+  regions           = ["us-east-1", "us-west-1", "us-west-2"]
+
+  tags = {
+    Name = "${var.record_name}-primary-hc"
+  }
+}
+
+# PRIMARY record
+resource "aws_route53_record" "primary" {
+  zone_id = aws_route53_zone.this.zone_id
+  name    = var.record_name
+  type    = var.record_type
+  ttl     = var.ttl
+
+  set_identifier = "primary"
+  failover       = "PRIMARY"
+
+  health_check_id = aws_route53_health_check.primary.id
+
+  records = var.record_type == "A" || var.record_type == "AAAA" ? [var.primary_ip] : null
+  # For CNAME failover instead, set record_type="CNAME" and provide primary_fqdn
+  records = var.record_type == "CNAME" ? [var.primary_fqdn] : (var.record_type == "A" || var.record_type == "AAAA" ? [var.primary_ip] : null)
+}
+
+# SECONDARY record (no health check required, optional to add)
+resource "aws_route53_record" "secondary" {
+  zone_id = aws_route53_zone.this.zone_id
+  name    = var.record_name
+  type    = var.record_type
+  ttl     = var.ttl
+
+  set_identifier = "secondary"
+  failover       = "SECONDARY"
+
+  records = var.record_type == "CNAME" ? [var.secondary_fqdn] : [var.secondary_ip]
+}
+
+#################
+# Input Vars    #
+#################
+
+variable "aws_region" {
+  type        = string
+  description = "AWS region for provider (not used by Route53 itself)"
+  default     = "us-east-1"
+}
+
+variable "zone_name" {
+  type        = string
+  description = "Hosted zone domain name (e.g., example.com)"
+}
+
+variable "record_name" {
+  type        = string
+  description = "Record name (e.g., app.example.com)"
+}
+
+variable "record_type" {
+  type        = string
+  description = "DNS record type: A | AAAA | CNAME"
+  default     = "A"
+}
+
+variable "ttl" {
+  type        = number
+  description = "TTL in seconds"
+  default     = 60
+}
+
+# PRIMARY endpoint values
+variable "primary_ip" {
+  type        = string
+  description = "Primary IP for A/AAAA records (leave empty if using CNAME)"
+  default     = ""
+}
+
+variable "primary_fqdn" {
+  type        = string
+  description = "Primary hostname for CNAME record (leave empty if using A/AAAA)"
+  default     = ""
+}
+
+# SECONDARY endpoint values
+variable "secondary_ip" {
+  type        = string
+  description = "Secondary IP for A/AAAA records (required when record_type is A/AAAA)"
+  default     = ""
+}
+
+variable "secondary_fqdn" {
+  type        = string
+  description = "Secondary hostname for CNAME record (required when record_type is CNAME)"
+  default     = ""
+}
+
+# Health check configuration
+variable "health_check_type" {
+  type        = string
+  description = "HTTP | HTTPS | TCP"
+  default     = "HTTPS"
+}
+
+variable "health_port" {
+  type        = number
+  description = "Port for health check (443 for HTTPS, 80 for HTTP, etc.)"
+  default     = 443
+}
+
+variable "health_path" {
+  type        = string
+  description = "Path for HTTP/HTTPS health checks"
+  default     = "/"
+}
