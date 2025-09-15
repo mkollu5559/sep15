@@ -1,0 +1,63 @@
+CREATE TABLE pharmacy_core_dev_T.SDOH_Activity (
+    ResolvePatientID        INT            NOT NULL,
+    ClientPatientID         VARCHAR(50)    NULL,
+    PatientGroup            VARCHAR(255)   NULL,
+    PatientSubgroup         VARCHAR(255)   NULL,
+    PatientUniqueIdentifier VARCHAR(255)   NULL,
+    PatientFirstName        VARCHAR(255)   NULL,
+    PatientLastName         VARCHAR(255)   NULL,
+    PatientDOB              DATE           NULL,
+    PatientIsDeceased       VARCHAR(255)   NULL,
+    PatientAddress1         VARCHAR(255)   NULL,
+    PatientAddress2         VARCHAR(255)   NULL,
+    PatientCity             VARCHAR(255)   NULL,
+    PatientState            VARCHAR(255)   NULL,
+    PatientZip              VARCHAR(255)   NULL,
+    SurveyResponseID        INT            NOT NULL,
+    SurveyID                VARCHAR(255)   NULL,
+    SurveyQuestionID        VARCHAR(255)   NULL,
+    SurveyQuestionText      VARCHAR(255)   NULL,
+    SurveyAnswerCode        VARCHAR(255)   NULL,
+    SurveyAnswerText        VARCHAR(255)   NULL,
+    SurveyCapturedDate      DATETIME       NULL,
+    SurveyCapturedSource    VARCHAR(255)   NULL,
+    LoadDateTimeStamp       DATETIME       NULL,
+    LastModifiedTimeStamp   DATETIME       NULL,
+    ProductDefined1         VARCHAR(255)   NULL,
+    ProductDefined2         VARCHAR(255)   NULL,
+    ProductDefined3         VARCHAR(255)   NULL,
+    ProductDefined4         VARCHAR(255)   NULL,
+    ProductDefined5         VARCHAR(255)   NULL,
+    CONSTRAINT PK_SDOH_Activity PRIMARY KEY (ResolvePatientID, SurveyResponseID)
+);
+
+-- Add column descriptions
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.ResolvePatientID IS 'Unique internal AdhereHealth identifier for a patient';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.ClientPatientID IS 'Unique internal client provided identifier for a patient';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.PatientGroup IS 'Patient Grouping identifier (e.g., Contract ID)';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.PatientSubgroup IS 'Patient Subgroup identifier (e.g., PDP ID)';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.PatientUniqueIdentifier IS 'Internal subsystem identifier (e.g., MRI)';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.PatientFirstName IS 'Patient first name';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.PatientLastName IS 'Patient last name';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.PatientDOB IS 'Patient date of birth (CCYY-MM-DD)';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.PatientIsDeceased IS 'Patient date of death or IsDeceased Indicator';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.PatientAddress1 IS 'Patient address';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.PatientAddress2 IS 'Patient additional address';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.PatientCity IS 'Patient city';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.PatientState IS 'Patient state';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.PatientZip IS 'Patient ZIP';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.SurveyResponseID IS 'Unique identifier of the answer to a specific survey question';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.SurveyID IS 'Identifier of the member survey response';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.SurveyQuestionID IS 'Question identifier';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.SurveyQuestionText IS 'Survey question text (e.g., Do you have a safe place to live?)';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.SurveyAnswerCode IS 'Survey answer code';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.SurveyAnswerText IS 'Survey answer text';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.SurveyCapturedDate IS 'Date response was captured';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.SurveyCapturedSource IS 'Source system capturing the survey (e.g., GxCon)';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.LoadDateTimeStamp IS 'Timestamp when record was loaded into AI warehouse';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.LastModifiedTimeStamp IS 'Timestamp when record was last modified';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.ProductDefined1 IS 'For AdhereHealth specific use';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.ProductDefined2 IS 'For AdhereHealth specific use';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.ProductDefined3 IS 'For AdhereHealth specific use';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.ProductDefined4 IS 'For AdhereHealth specific use';
+COMMENT ON COLUMN pharmacy_core_dev_T.SDOH_Activity.ProductDefined5 IS 'For AdhereHealth specific use';
