@@ -1,0 +1,216 @@
+###############################################################################
+# ONE-FILE IAM ROLE + MULTI-POLICY ATTACHMENTS (copy/paste and `terraform apply`)
+###############################################################################
+
+terraform {
+  required_version = ">= 1.4.0"
+  required_providers {
+    aws = { source = "hashicorp/aws", version = ">= 5.0" }
+  }
+}
+
+provider "aws" {
+  region = var.region
+}
+
+############################
+# ======= VARIABLES =======
+############################
+variable "region" {
+  type        = string
+  default     = "us-east-1"
+  description = "AWS region."
+}
+
+variable "role_name" {
+  type        = string
+  description = "IAM role name."
+}
+
+variable "path" {
+  type        = string
+  default     = "/"
+  description = "IAM path."
+}
+
+variable "max_session_duration" {
+  type        = number
+  default     = 3600
+  description = "3600–43200 seconds."
+}
+
+variable "permissions_boundary_arn" {
+  type        = string
+  default     = null
+  description = "Optional permissions boundary."
+}
+
+# Trust policy principals
+variable "assume_principals" {
+  type = object({
+    services = optional(list(string), [])
+    arns     = optional(list(string), [])
+  })
+  default     = {}
+  description = "Principals that can assume the role."
+}
+
+# Managed policy ARNs to attach
+variable "managed_policy_arns" {
+  type        = list(string)
+  default     = []
+  description = "List of managed policy ARNs."
+}
+
+# Inline policies map[name] = JSON string
+variable "inline_policies" {
+  type        = map(string)
+  default     = {}
+  description = "Map of inline policies as JSON strings."
+}
+
+variable "tags" {
+  type        = map(string)
+  default     = {}
+  description = "Tags for the role."
+}
+
+############################
+# ===== SAMPLE POLICIES ===
+# (Edit or remove. Pass your own via var.inline_policies)
+############################
+locals {
+  # Example 1: S3 RW
+  s3_rw = <<JSON
+{
+  "Version":"2012-10-17",
+  "Statement":[
+    { "Effect":"Allow", "Action":["s3:ListBucket"], "Resource":"arn:aws:s3:::my-bucket" },
+    { "Effect":"Allow", "Action":["s3:GetObject","s3:PutObject","s3:DeleteObject"], "Resource":"arn:aws:s3:::my-bucket/*" }
+  ]
+}
+JSON
+
+  # Example 2: DynamoDB RW
+  dynamodb_rw = <<JSON
+{
+  "Version":"2012-10-17",
+  "Statement":[
+    { "Effect":"Allow", "Action":["dynamodb:GetItem","dynamodb:PutItem","dynamodb:Query"], "Resource":"arn:aws:dynamodb:us-east-1:111111111111:table/MyTable" }
+  ]
+}
+JSON
+
+  # Example 3: SQS RW
+  sqs_rw = <<JSON
+{
+  "Version":"2012-10-17",
+  "Statement":[
+    { "Effect":"Allow", "Action":["sqs:SendMessage","sqs:ReceiveMessage","sqs:DeleteMessage","sqs:GetQueueAttributes"], "Resource":"arn:aws:sqs:us-east-1:111111111111:MyQueue" }
+  ]
+}
+JSON
+
+  # Example 4: CloudWatch Logs basic
+  cloudwatch_logs = <<JSON
+{
+  "Version":"2012-10-17",
+  "Statement":[
+    { "Effect":"Allow", "Action":["logs:CreateLogGroup","logs:CreateLogStream","logs:PutLogEvents"], "Resource":"arn:aws:logs:us-east-1:111111111111:log-group:/aws/lambda/*" }
+  ]
+}
+JSON
+
+  # Example 5: KMS encrypt/decrypt
+  kms_crypto = <<JSON
+{
+  "Version":"2012-10-17",
+  "Statement":[
+    { "Effect":"Allow", "Action":["kms:Encrypt","kms:Decrypt","kms:GenerateDataKey*","kms:DescribeKey"], "Resource":"arn:aws:kms:us-east-1:111111111111:key/abcd-1234" }
+  ]
+}
+JSON
+
+  # Merge samples with any provided via var.inline_policies
+  default_inline_policies = {
+    s3_rw       = local.s3_rw
+    dynamodb_rw = local.dynamodb_rw
+    sqs_rw      = local.sqs_rw
+    cloudwatch  = local.cloudwatch_logs
+    kms_crypto  = local.kms_crypto
+  }
+
+  effective_inline_policies = length(var.inline_policies) > 0 ? var.inline_policies : local.default_inline_policies
+
+  service_principals = length(try(var.assume_principals.services, [])) > 0 ? [{
+    type        = "Service"
+    identifiers = var.assume_principals.services
+  }] : []
+
+  arn_principals = length(try(var.assume_principals.arns, [])) > 0 ? [{
+    type        = "AWS"
+    identifiers = var.assume_principals.arns
+  }] : []
+}
+
+############################
+# ===== TRUST POLICY ======
+############################
+data "aws_iam_policy_document" "assume" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole", "sts:TagSession"]
+
+    dynamic "principals" {
+      for_each = concat(local.service_principals, local.arn_principals)
+      content {
+        type        = principals.value.type
+        identifiers = principals.value.identifiers
+      }
+    }
+  }
+}
+
+############################
+# ======== ROLE ===========
+############################
+resource "aws_iam_role" "this" {
+  name                 = var.role_name
+  path                 = var.path
+  assume_role_policy   = data.aws_iam_policy_document.assume.json
+  max_session_duration = var.max_session_duration
+  permissions_boundary = var.permissions_boundary_arn
+  tags                 = var.tags
+}
+
+############################
+# ==== INLINE POLICIES ====
+############################
+resource "aws_iam_role_policy" "inline" {
+  for_each = local.effective_inline_policies
+  name     = each.key
+  role     = aws_iam_role.this.id
+  policy   = each.value
+}
+
+############################
+# == MANAGED ATTACHMENTS ==
+############################
+resource "aws_iam_role_policy_attachment" "managed" {
+  for_each   = toset(var.managed_policy_arns)
+  role       = aws_iam_role.this.name
+  policy_arn = each.value
+}
+
+############################
+# ======= OUTPUTS =========
+############################
+output "role_name" {
+  description = "IAM role name."
+  value       = aws_iam_role.this.name
+}
+
+output "role_arn" {
+  description = "IAM role ARN."
+  value       = aws_iam_role.this.arn
+}
