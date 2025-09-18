@@ -1,45 +1,106 @@
 #############################################
-# PostgreSQL Intelligent Performance – ALL
-# (drop into your flexible_server module)
+# Azure PostgreSQL Flexible Server
+# Intelligent Tuning + Performance Insights
+# (drop into your module alongside the server)
+#
+# Assumes you already create:
+# resource "azurerm_postgresql_flexible_server" "db" { ... }
 #############################################
 
-# ---------- variables.tf ----------
+# ==================== variables.tf ====================
 variable "enable_pg_perf_features" {
-  description = "Turn on Performance Insights + Intelligent Performance (lower envs only)."
+  description = "Enable Performance Insights features (pg_stat_statements, query capture). Recommended in lower environments."
+  type        = bool
+  default     = false
+}
+
+variable "enable_intelligent_tuning" {
+  description = "Enable Azure Intelligent Tuning (index/autovacuum tuning) via server parameters."
   type        = bool
   default     = false
 }
 
 variable "postgresql_extensions" {
-  description = "Extensions to allow-list for Intelligent Performance/Index recommendations."
+  description = <<EOT
+List of PostgreSQL extensions to ALLOW-LIST at the SERVER level (portal Intelligent Performance).
+Must be supported by Azure PostgreSQL Flexible Server.
+Recommended set to light up portal features:
+- pg_stat_statements : Performance Insights graphs
+- pg_qualstats       : index recommendations
+- auto_explain       : exec plan sampling
+- hypopg             : hypothetical indexes
+- pgcrypto           : common crypto/UUID functions
+EOT
   type        = list(string)
-  # Minimum set for Insights + Index recommendations:
-  default     = ["pg_stat_statements", "pg_qualstats", "auto_explain", "hypopg"]
+  default     = ["pg_stat_statements","pg_qualstats","auto_explain","hypopg","pgcrypto"]
 }
 
-variable "perf_db_list" {
-  description = "Databases where extensions should be created. Leave empty to skip DB object creation."
+variable "intelligent_tuning_targets" {
+  description = <<EOT
+Targets for intelligent tuning ('intelligent_tuning.metric_targets').
+Use one of:
+- ["ALL"]  : enable all targets
+- ["NONE"] : disable all targets
+- subset   : e.g., ["tuning-autovacuum"]
+EOT
   type        = list(string)
-  default     = []
+  default     = ["tuning-autovacuum"]
 }
 
-# ---------- locals.tf (or top of main.tf) ----------
+# ---------- Index tuning knobs (see MS docs for ranges) ----------
+variable "index_tuning_mode" {
+  description = "Index tuning mode: REPORT (recommend only) or ENFORCE (auto create/drop)."
+  type        = string
+  default     = "REPORT"
+}
+
+variable "index_tuning_analysis_interval" {
+  description = "Frequency (minutes) for index analysis. Range: 60–10080. Default: 720."
+  type        = number
+  default     = 720
+}
+
+variable "index_tuning_max_columns_per_index" {
+  description = "Max columns per recommended index (1–10). Default: 10."
+  type        = number
+  default     = 10
+}
+
+variable "index_tuning_max_new_index_count" {
+  description = "Max new indexes recommended per DB in one session (1–25). Default: 10."
+  type        = number
+  default     = 10
+}
+
+variable "index_tuning_max_indexes_per_table" {
+  description = "Max recommended indexes per table (1–25). Default: 10."
+  type        = number
+  default     = 10
+}
+
+variable "index_tuning_max_new_indexes_per_db" {
+  description = "Max new indexes recommended per database (1–100). Default: 25."
+  type        = number
+  default     = 25
+}
+
+# ==================== locals.tf ====================
 locals {
-  # normalized, deduped, comma-joined list for the server config
-  postgresql_extensions_csv = join(",", [for e in distinct(var.postgresql_extensions) : lower(trim(e))])
+  postgresql_extensions_csv      = join(",", [for e in distinct(var.postgresql_extensions) : lower(trim(e))])
+  intelligent_tuning_targets_csv = join(",", [for t in distinct(var.intelligent_tuning_targets) : trim(t)])
 }
 
-# ---------- SERVER-LEVEL allow-list & tuning (must be after server resource) ----------
-# Allow-list extensions at the server level (portal 'Enable Intelligent Performance')
-resource "azurerm_postgresql_flexible_server_configuration" "extensions_allowlist" {
+# ==================== resources.tf ====================
+
+# --- Allow-list extensions at SERVER level (portal: Intelligent Performance toggle) ---
+resource "azurerm_postgresql_flexible_server_configuration" "azure_extensions" {
   count     = var.enable_pg_perf_features && length(var.postgresql_extensions) > 0 ? 1 : 0
   name      = "azure.extensions"
   server_id = azurerm_postgresql_flexible_server.db.id
   value     = local.postgresql_extensions_csv
-  depends_on = [azurerm_postgresql_flexible_server.db]
 }
 
-# Performance Insights (Query Performance Insight) relies on pg_stat_statements
+# --- Performance Insights: pg_stat_statements & capture friendliness ---
 resource "azurerm_postgresql_flexible_server_configuration" "pg_stat_statements_track" {
   count     = var.enable_pg_perf_features ? 1 : 0
   name      = "pg_stat_statements.track"
@@ -54,7 +115,6 @@ resource "azurerm_postgresql_flexible_server_configuration" "pg_stat_statements_
   value     = "10000"
 }
 
-# Longer captured SQL text in pg_stat_activity (nicer in portal)
 resource "azurerm_postgresql_flexible_server_configuration" "track_activity_query_size" {
   count     = var.enable_pg_perf_features ? 1 : 0
   name      = "track_activity_query_size"
@@ -62,7 +122,6 @@ resource "azurerm_postgresql_flexible_server_configuration" "track_activity_quer
   value     = "16384"
 }
 
-# Optional: track planning phase in pg_stat_statements
 resource "azurerm_postgresql_flexible_server_configuration" "pg_stat_statements_track_planning" {
   count     = var.enable_pg_perf_features ? 1 : 0
   name      = "pg_stat_statements.track_planning"
@@ -70,64 +129,78 @@ resource "azurerm_postgresql_flexible_server_configuration" "pg_stat_statements_
   value     = "on"
 }
 
-# Helpful for index recommendations (qualstats thresholds)
-resource "azurerm_postgresql_flexible_server_configuration" "pg_qualstats_compute_threshold" {
-  count     = var.enable_pg_perf_features ? 1 : 0
-  name      = "pg_qualstats.compute_threshold"
+# --- Intelligent Tuning master switches ---
+resource "azurerm_postgresql_flexible_server_configuration" "intelligent_tuning" {
+  count     = var.enable_intelligent_tuning ? 1 : 0
+  name      = "intelligent_tuning"
   server_id = azurerm_postgresql_flexible_server.db.id
-  value     = "100"
+  value     = "on"
 }
 
-# ---------- (OPTIONAL) DB-LEVEL extension creation ----------
-# If you want Terraform to actually CREATE the extensions in each database,
-# uncomment the provider below and the postgresql_extension resources.
-# You must ensure network/firewall/identity allow this connection.
+resource "azurerm_postgresql_flexible_server_configuration" "intelligent_tuning_metric_targets" {
+  count     = var.enable_intelligent_tuning ? 1 : 0
+  name      = "intelligent_tuning.metric_targets"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  value     = local.intelligent_tuning_targets_csv
+  depends_on = [azurerm_postgresql_flexible_server_configuration.intelligent_tuning]
+}
 
-# provider "postgresql" {
-#   host            = azurerm_postgresql_flexible_server.db.fqdn
-#   port            = 5432
-#   username        = "${random_string.db_server_username.result}@${azurerm_postgresql_flexible_server.db.name}"
-#   password        = random_password.db_server_password.result
-#   sslmode         = "require"
-#   connect_timeout = 15
-# }
+# --- Index tuning knobs ---
+resource "azurerm_postgresql_flexible_server_configuration" "index_tuning_mode" {
+  count     = var.enable_intelligent_tuning ? 1 : 0
+  name      = "index_tuning.mode"   # REPORT | ENFORCE
+  server_id = azurerm_postgresql_flexible_server.db.id
+  value     = var.index_tuning_mode
+}
 
-# # Create each extension in each target DB
-# resource "postgresql_extension" "perf_exts" {
-#   for_each = var.enable_pg_perf_features && length(var.perf_db_list) > 0
-#     ? { for db in var.perf_db_list : db => db }
-#     : {}
-#   name     = "" # placeholder; created via `postgresql_extension_per_db`
-#   database = each.value
-#   # This stub prevents provider complaining if list is empty; real creation below.
-# }
+resource "azurerm_postgresql_flexible_server_configuration" "index_tuning_analysis_interval" {
+  count     = var.enable_intelligent_tuning ? 1 : 0
+  name      = "index_tuning.analysis_interval"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  value     = tostring(var.index_tuning_analysis_interval)
+}
 
-# locals {
-#   _ext_matrix = flatten([
-#     for db in var.perf_db_list : [
-#       for ext in var.postgresql_extensions : {
-#         key = "${db}:${ext}"
-#         db  = db
-#         ext = ext
-#       }
-#     ]
-#   ])
-# }
+resource "azurerm_postgresql_flexible_server_configuration" "index_tuning_max_columns_per_index" {
+  count     = var.enable_intelligent_tuning ? 1 : 0
+  name      = "index_tuning.max_columns_per_index"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  value     = tostring(var.index_tuning_max_columns_per_index)
+}
 
-# resource "postgresql_extension" "postgresql_extension_per_db" {
-#   for_each = var.enable_pg_perf_features
-#     ? { for m in local._ext_matrix : m.key => m }
-#     : {}
-#   name     = each.value.ext
-#   database = each.value.db
-#   depends_on = [azurerm_postgresql_flexible_server_configuration.extensions_allowlist]
-# }
+resource "azurerm_postgresql_flexible_server_configuration" "index_tuning_max_new_index_count" {
+  count     = var.enable_intelligent_tuning ? 1 : 0
+  name      = "index_tuning.max_new_index_count"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  value     = tostring(var.index_tuning_max_new_index_count)
+}
 
-# ---------- HOW TO TURN ON ONLY IN LOWER ENVS ----------
-# In dev/test/stg tfvars:
-# enable_pg_perf_features = true
-# perf_db_list            = ["app_db"]     # or any DBs you want to populate
-# postgresql_extensions   = ["pg_stat_statements","pg_qualstats","auto_explain","hypopg"]
+resource "azurerm_postgresql_flexible_server_configuration" "index_tuning_max_indexes_per_table" {
+  count     = var.enable_intelligent_tuning ? 1 : 0
+  name      = "index_tuning.max_indexes_per_table"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  value     = tostring(var.index_tuning_max_indexes_per_table)
+}
+
+resource "azurerm_postgresql_flexible_server_configuration" "index_tuning_max_new_indexes_per_db" {
+  count     = var.enable_intelligent_tuning ? 1 : 0
+  name      = "index_tuning.max_new_indexes_per_database"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  value     = tostring(var.index_tuning_max_new_indexes_per_db)
+}
+
+# ==================== example tfvars ====================
+# ---- dev/test/stg ----
+# enable_pg_perf_features    = true
+# enable_intelligent_tuning  = true
+# postgresql_extensions      = ["pg_stat_statements","pg_qualstats","auto_explain","hypopg","pgcrypto"]
+# intelligent_tuning_targets = ["tuning-autovacuum"] # or ["ALL"]
+# index_tuning_mode                 = "REPORT"
+# index_tuning_analysis_interval    = 720
+# index_tuning_max_columns_per_index= 10
+# index_tuning_max_new_index_count  = 10
+# index_tuning_max_indexes_per_table= 10
+# index_tuning_max_new_indexes_per_db= 25
 #
-# In prod tfvars:
-# enable_pg_perf_features = false
+# ---- prod ----
+# enable_pg_perf_features   = false
+# enable_intelligent_tuning = false
