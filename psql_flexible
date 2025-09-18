@@ -1,0 +1,93 @@
+# -------------------------
+# Add to variables.tf
+# -------------------------
+variable "enable_pg_perf_features" {
+  description = "Enable Performance Insights / Intelligent Performance (lower envs only)."
+  type        = bool
+  default     = false
+}
+
+variable "perf_extensions" {
+  description = "Extensions needed for Performance Insights & Index Tuning."
+  type        = list(string)
+  default     = ["pg_stat_statements", "pg_qualstats", "auto_explain", "hypopg"]
+}
+
+# -------------------------
+# Add to your azurerm_postgresql_flexible_server module (same file where you create the server)
+# -------------------------
+
+# Allow required extensions on the server (portal shows this as 'Enable intelligent performance')
+resource "azurerm_postgresql_flexible_server_configuration" "extensions_allowlist" {
+  count     = var.enable_pg_perf_features ? 1 : 0
+  name      = "azure.extensions"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  value     = join(",", var.perf_extensions)
+}
+
+# Recommended settings for Query Performance Insight (uses pg_stat_statements)
+resource "azurerm_postgresql_flexible_server_configuration" "pg_stat_statements_track" {
+  count     = var.enable_pg_perf_features ? 1 : 0
+  name      = "pg_stat_statements.track"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  value     = "all"
+}
+
+resource "azurerm_postgresql_flexible_server_configuration" "pg_stat_statements_max" {
+  count     = var.enable_pg_perf_features ? 1 : 0
+  name      = "pg_stat_statements.max"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  value     = "10000"
+}
+
+# Helpful when generating index recommendations (qualstats collects predicate stats)
+resource "azurerm_postgresql_flexible_server_configuration" "pg_qualstats_compute_threshold" {
+  count     = var.enable_pg_perf_features ? 1 : 0
+  name      = "pg_qualstats.compute_threshold"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  value     = "100"
+}
+
+# Increase captured text length for long queries viewed in Performance Insights
+resource "azurerm_postgresql_flexible_server_configuration" "track_activity_query_size" {
+  count     = var.enable_pg_perf_features ? 1 : 0
+  name      = "track_activity_query_size"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  value     = "16384"
+}
+
+# Optional: capture nested statements for better plans visibility
+resource "azurerm_postgresql_flexible_server_configuration" "pg_stat_statements_track_planning" {
+  count     = var.enable_pg_perf_features ? 1 : 0
+  name      = "pg_stat_statements.track_planning"
+  server_id = azurerm_postgresql_flexible_server.db.id
+  value     = "on"
+}
+
+# -------------------------
+# HOW TO TURN ON ONLY IN LOWER ENVS
+# In your <env>.tfvars for dev/test/stg set:
+# enable_pg_perf_features = true
+#
+# Leave it false in prod tfvars.
+# -------------------------
+
+# -------------------------
+# (Optional) If you manage DB objects via Terraform, create the extensions in each DB.
+# Uncomment if you already create databases with azurerm_postgresql_flexible_server_database.* resources.
+# -------------------------
+# provider "postgresql" {
+#   host            = azurerm_postgresql_flexible_server.db.fqdn
+#   port            = 5432
+#   username        = "${random_string.db_server_username.result}@${azurerm_postgresql_flexible_server.db.name}"
+#   password        = random_password.db_server_password.result
+#   sslmode         = "require"
+#   connect_timeout = 15
+# }
+#
+# resource "postgresql_extension" "perf_exts" {
+#   for_each  = var.enable_pg_perf_features ? toset(var.perf_extensions) : []
+#   name      = each.value
+#   database  = "postgres" # or each.key from your DB resources
+#   depends_on = [azurerm_postgresql_flexible_server_configuration.extensions_allowlist]
+# }
