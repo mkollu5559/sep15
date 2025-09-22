@@ -1,9 +1,5 @@
 ###############################################################################
-# modules/iam_role/main.tf
-# Reusable module to create an IAM Role and attach:
-#  - assume-role policy from a JSON file
-#  - any number of inline IAM policies from JSON files (created as IAM policies)
-#  - any number of AWS-managed policy ARNs
+# modules/iam_role/main.tf  (updated to support ${account_id} in JSON templates)
 ###############################################################################
 
 terraform {
@@ -21,50 +17,42 @@ variable "role_name" {
 
 variable "assume_role_policy_json" {
   type        = string
-  description = "Path to assume-role policy JSON file (e.g., files/assume.json)."
+  description = "Path to assume-role policy JSON template (use .tpl if interpolating ${account_id})."
 }
 
 variable "policy_json_files" {
   type        = map(string)
-  default     = {}
-  description = <<EOT
-Map of { policy_name = path_to_json }. Each JSON will be created as an
-aws_iam_policy and attached to the role. Example:
-{
-  "s3-access" = "files/policies/s3-access.json",
-  "logs"      = "files/policies/cloudwatch-logs.json"
-}
-EOT
+  description = "Map of { policy_name = path_to_json_tpl }. Each JSON template becomes a customer-managed policy and is attached."
 }
 
 variable "managed_policy_arns" {
   type        = list(string)
-  default     = []
   description = "List of AWS managed policy ARNs to attach to the role."
 }
 
 variable "path" {
   type        = string
-  default     = "/"
   description = "IAM role path."
 }
 
 variable "description" {
   type        = string
-  default     = ""
   description = "Role description."
 }
 
 variable "max_session_duration" {
   type        = number
-  default     = 3600
   description = "Max session duration in seconds (3600–43200)."
 }
 
 variable "tags" {
   type        = map(string)
-  default     = {}
   description = "Tags for the role and created customer-managed policies."
+}
+
+variable "account_id" {
+  type        = string
+  description = "AWS Account ID to substitute inside JSON templates."
 }
 
 # ------------------------------ Resources ------------------------------------
@@ -74,17 +62,27 @@ resource "aws_iam_role" "this" {
   path                 = var.path
   description          = var.description
   max_session_duration = var.max_session_duration
-  assume_role_policy   = file(var.assume_role_policy_json)
-  tags                 = var.tags
+
+  # render assume-role policy (works for plain JSON or .tpl with ${account_id})
+  assume_role_policy = templatefile(var.assume_role_policy_json, {
+    account_id = var.account_id
+  })
+
+  tags = var.tags
 }
 
-# Create customer-managed policies from JSON files
+# Create customer-managed policies from JSON templates
 resource "aws_iam_policy" "this" {
   for_each    = var.policy_json_files
   name        = "${var.role_name}-${each.key}"
   description = "Policy ${each.key} for role ${var.role_name}"
-  policy      = file(each.value)
-  tags        = var.tags
+
+  # render template with variables (unused vars are ignored in templates without placeholders)
+  policy = templatefile(each.value, {
+    account_id = var.account_id
+  })
+
+  tags = var.tags
 }
 
 # Attach the customer-managed policies to the role
@@ -115,35 +113,5 @@ output "role_arn" {
 
 output "attached_custom_policy_arns" {
   value       = [for p in aws_iam_policy.this : p.arn]
-  description = "ARNs of customer-managed policies created from JSON files."
-}
-
-
-output "role_name" { value = aws_iam_role.this.name }
-output "role_arn"  { value = aws_iam_role.this.arn  }
-output "custom_policy_arns" { value = [for p in aws_iam_policy.custom : p.arn] }
-
-# example usage in root
-module "iam_role" {
-  source = "./modules/iam_role"
-
-  role_name               = "efm-app-role"
-  assume_role_policy_json = "files/assume.json"
-
-  # pass {} or [] yourself if none
-  policy_json_files = {
-    s3 = "files/policies/s3.json"
-    cw = "files/policies/cloudwatch.json"
-  }
-  managed_policy_arns = [
-    "arn:aws:iam::aws:policy/ReadOnlyAccess"
-  ]
-
-  path                 = "/"
-  description          = "EFM app role"
-  max_session_duration = 3600
-  tags = {
-    Environment = "dev"
-    App         = "efm"
-  }
+  description = "ARNs of customer-managed policies created from JSON templates."
 }
