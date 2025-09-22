@@ -1,10 +1,4 @@
-Thought for 18s
 
-User wants a Terraform module that uses a JSON template for policy, where variables like account number and role name(s) are provided. The module should read the policy via templatefile with a variables map, allowing flexibility for both single roles and lists. I'll keep it concise, avoid defaults, and provide variables with clear descriptions.
-
-I need to implement the policy template and variables map. I'll create a policy_template_path and a vars map for things like account_id and role_name. The template would include placeholders that
-
-Done
 # modules/kms/variables.tf
 variable "kms_key_name" {
   type        = string
