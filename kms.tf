@@ -1,37 +1,44 @@
-Here’s a clean Terraform module to create a KMS key with alias and policy support:
+Thought for 18s
 
+User wants a Terraform module that uses a JSON template for policy, where variables like account number and role name(s) are provided. The module should read the policy via templatefile with a variables map, allowing flexibility for both single roles and lists. I'll keep it concise, avoid defaults, and provide variables with clear descriptions.
+
+I need to implement the policy template and variables map. I'll create a policy_template_path and a vars map for things like account_id and role_name. The template would include placeholders that
+
+Done
 # modules/kms/variables.tf
 variable "kms_key_name" {
   type        = string
-  description = "Alias name for the KMS key (without 'alias/')."
+  description = "Alias (without 'alias/')."
 }
 
 variable "description" {
   type        = string
-  description = "Description of the KMS key."
+  description = "KMS key description."
+}
+
+variable "policy_template" {
+  type        = string
+  description = "Path to policy template file (e.g., policies/kms-policy.json.tpl)."
+}
+
+variable "policy_vars" {
+  type        = map(string)
+  description = "Vars for templatefile(), e.g. { account_id = \"123...\", role_arns_json = jsonencode([\"arn:...:role/x\"]) }"
 }
 
 variable "deletion_window_in_days" {
   type        = number
-  default     = 30
-  description = "Waiting period for KMS key deletion (7–30 days)."
+  description = "7–30."
 }
 
 variable "enable_key_rotation" {
   type        = bool
-  default     = true
-  description = "Enable automatic key rotation."
-}
-
-variable "policy_json" {
-  type        = string
-  description = "Path to a JSON policy file for the KMS key."
+  description = "true/false."
 }
 
 variable "tags" {
   type        = map(string)
-  default     = {}
-  description = "Tags to apply to the KMS key."
+  description = "Tags."
 }
 
 # modules/kms/main.tf
@@ -39,7 +46,7 @@ resource "aws_kms_key" "this" {
   description             = var.description
   deletion_window_in_days = var.deletion_window_in_days
   enable_key_rotation     = var.enable_key_rotation
-  policy                  = file(var.policy_json)
+  policy                  = templatefile(var.policy_template, var.policy_vars)
   tags                    = var.tags
 }
 
@@ -49,33 +56,59 @@ resource "aws_kms_alias" "this" {
 }
 
 # modules/kms/outputs.tf
-output "kms_key_id" {
-  value       = aws_kms_key.this.key_id
-  description = "KMS key ID."
-}
+output "kms_key_id"  { value = aws_kms_key.this.key_id }
+output "kms_key_arn" { value = aws_kms_key.this.arn }
+output "kms_alias"   { value = aws_kms_alias.this.name }
 
-output "kms_key_arn" {
-  value       = aws_kms_key.this.arn
-  description = "KMS key ARN."
-}
-
-output "kms_alias" {
-  value       = aws_kms_alias.this.name
-  description = "KMS key alias."
-}
-
-Example usage in root
+Example call (you provide the JSON template + vars)
 module "kms" {
-  source = "./modules/kms"
+  source                  = "./modules/kms"
+  kms_key_name            = "s3-repl-key"
+  description             = "KMS for S3 replication"
+  policy_template         = "policies/kms-policy.json.tpl"
 
-  kms_key_name            = "s3-replication-key"
-  description             = "KMS key for S3 replication"
+  # You control account number and roles here
+  policy_vars = {
+    account_id      = var.account_id
+    role_arns_json  = jsonencode([
+      "arn:aws-us-gov:iam::${var.account_id}:role/s3-replication-role",
+      "arn:aws-us-gov:iam::${var.account_id}:role/backup-role"
+    ])
+  }
+
   deletion_window_in_days = 30
   enable_key_rotation     = true
-  policy_json             = "policies/kms-policy.json"
-
-  tags = {
-    Environment = "dev"
-    App         = "efm"
-  }
+  tags                    = var.tags
 }
+
+Minimal template example you can edit (policies/kms-policy.json.tpl)
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RootFullAccess",
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws-us-gov:iam::${account_id}:root" },
+      "Action": "kms:*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "RolesUseKey",
+      "Effect": "Allow",
+      "Principal": { "AWS": ${role_arns_json} },
+      "Action": [
+        "kms:Encrypt",
+        "kms:Decrypt",
+        "kms:ReEncrypt*",
+        "kms:GenerateDataKey*",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+
+
+Use ${account_id} or any other placeholders you want; pass them via policy_vars. For multiple roles, pass role_arns_json = jsonencode([...]).
+
+ChatGPT can make mistakes. Check important info.
