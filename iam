@@ -1,5 +1,19 @@
-Thought for 25s
-# modules/iam_role/variables.tf
+###############################################################################
+# modules/iam_role/main.tf
+# Reusable module to create an IAM Role and attach:
+#  - assume-role policy from a JSON file
+#  - any number of inline IAM policies from JSON files (created as IAM policies)
+#  - any number of AWS-managed policy ARNs
+###############################################################################
+
+terraform {
+  required_providers {
+    aws = { source = "hashicorp/aws", version = ">= 5.0" }
+  }
+}
+
+# ----------------------------- Variables -------------------------------------
+
 variable "role_name" {
   type        = string
   description = "IAM role name."
@@ -7,39 +21,53 @@ variable "role_name" {
 
 variable "assume_role_policy_json" {
   type        = string
-  description = "Path to the assume-role policy JSON file."
+  description = "Path to assume-role policy JSON file (e.g., files/assume.json)."
 }
 
 variable "policy_json_files" {
   type        = map(string)
-  description = "Map of { policy_name = path_to_json }. Each JSON becomes a customer-managed policy and is attached to the role."
+  default     = {}
+  description = <<EOT
+Map of { policy_name = path_to_json }. Each JSON will be created as an
+aws_iam_policy and attached to the role. Example:
+{
+  "s3-access" = "files/policies/s3-access.json",
+  "logs"      = "files/policies/cloudwatch-logs.json"
+}
+EOT
 }
 
 variable "managed_policy_arns" {
   type        = list(string)
+  default     = []
   description = "List of AWS managed policy ARNs to attach to the role."
 }
 
 variable "path" {
   type        = string
-  description = "IAM role path (e.g., '/')."
+  default     = "/"
+  description = "IAM role path."
 }
 
 variable "description" {
   type        = string
+  default     = ""
   description = "Role description."
 }
 
 variable "max_session_duration" {
   type        = number
+  default     = 3600
   description = "Max session duration in seconds (3600–43200)."
 }
 
 variable "tags" {
   type        = map(string)
-  description = "Tags to apply to the role and created policies."
+  default     = {}
+  description = "Tags for the role and created customer-managed policies."
 }
 
+# ------------------------------ Resources ------------------------------------
 
 resource "aws_iam_role" "this" {
   name                 = var.role_name
@@ -50,7 +78,8 @@ resource "aws_iam_role" "this" {
   tags                 = var.tags
 }
 
-resource "aws_iam_policy" "custom" {
+# Create customer-managed policies from JSON files
+resource "aws_iam_policy" "this" {
   for_each    = var.policy_json_files
   name        = "${var.role_name}-${each.key}"
   description = "Policy ${each.key} for role ${var.role_name}"
@@ -58,17 +87,37 @@ resource "aws_iam_policy" "custom" {
   tags        = var.tags
 }
 
-resource "aws_iam_role_policy_attachment" "attach_custom" {
-  for_each   = aws_iam_policy.custom
+# Attach the customer-managed policies to the role
+resource "aws_iam_role_policy_attachment" "custom" {
+  for_each   = aws_iam_policy.this
   role       = aws_iam_role.this.name
   policy_arn = each.value.arn
 }
 
-resource "aws_iam_role_policy_attachment" "attach_managed" {
+# Attach AWS-managed policies to the role
+resource "aws_iam_role_policy_attachment" "managed" {
   for_each   = toset(var.managed_policy_arns)
   role       = aws_iam_role.this.name
   policy_arn = each.value
 }
+
+# ------------------------------- Outputs -------------------------------------
+
+output "role_name" {
+  value       = aws_iam_role.this.name
+  description = "IAM role name."
+}
+
+output "role_arn" {
+  value       = aws_iam_role.this.arn
+  description = "IAM role ARN."
+}
+
+output "attached_custom_policy_arns" {
+  value       = [for p in aws_iam_policy.this : p.arn]
+  description = "ARNs of customer-managed policies created from JSON files."
+}
+
 
 output "role_name" { value = aws_iam_role.this.name }
 output "role_arn"  { value = aws_iam_role.this.arn  }
