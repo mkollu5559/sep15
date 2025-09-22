@@ -1,144 +1,99 @@
-terraform {
-  required_version = ">= 1.5.0"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = ">= 5.0"
-    }
-  }
+data "aws_route53_zone" "this" {
+  name         = var.zone_name
+  private_zone = true
 }
 
-provider "aws" {
-  region = var.aws_region
-}
-
-############################
-# Route 53 Failover Setup  #
-############################
-
-resource "aws_route53_zone" "this" {
-  name = var.zone_name
-}
-
-# Health check for PRIMARY endpoint
+# TCP/22 health checks
 resource "aws_route53_health_check" "primary" {
-  fqdn              = var.primary_fqdn != "" ? var.primary_fqdn : null
-  ip_address        = var.primary_ip     != "" ? var.primary_ip     : null
-  port              = var.health_port
-  type              = var.health_check_type
-  resource_path     = var.health_check_type == "HTTP" || var.health_check_type == "HTTPS" ? var.health_path : null
-  failure_threshold = 3
-  request_interval  = 30
-  regions           = ["us-east-1", "us-west-1", "us-west-2"]
-
-  tags = {
-    Name = "${var.record_name}-primary-hc"
-  }
+  type              = "TCP"
+  fqdn              = var.primary_target
+  port              = 22
+  request_interval  = var.hc_interval
+  failure_threshold = var.hc_fail_thresh
+  tags = { Name = "sftp-primary-tcp22" }
 }
 
-# PRIMARY record
+resource "aws_route53_health_check" "secondary" {
+  type              = "TCP"
+  fqdn              = var.secondary_target
+  port              = 22
+  request_interval  = var.hc_interval
+  failure_threshold = var.hc_fail_thresh
+  tags = { Name = "sftp-secondary-tcp22" }
+}
+
+# Failover CNAME records (non-alias)
+locals {
+  fqdn = "${var.record_host}.${var.zone_name}" # e.g. "sftp.dev.nit-nis.awscfs.frb.pvt"
+}
+
 resource "aws_route53_record" "primary" {
-  zone_id = aws_route53_zone.this.zone_id
-  name    = var.record_name
-  type    = var.record_type
-  ttl     = var.ttl
-
-  set_identifier = "primary"
-  failover       = "PRIMARY"
-
-  health_check_id = aws_route53_health_check.primary.id
-
-  records = var.record_type == "A" || var.record_type == "AAAA" ? [var.primary_ip] : null
-  # For CNAME failover instead, set record_type="CNAME" and provide primary_fqdn
-  records = var.record_type == "CNAME" ? [var.primary_fqdn] : (var.record_type == "A" || var.record_type == "AAAA" ? [var.primary_ip] : null)
+  zone_id           = data.aws_route53_zone.this.zone_id
+  name              = local.fqdn
+  type              = "CNAME"
+  ttl               = var.ttl
+  records           = [var.primary_target]
+  set_identifier    = "primary"
+  health_check_id   = aws_route53_health_check.primary.id
+  failover_routing_policy { type = "PRIMARY" }
 }
 
-# SECONDARY record (no health check required, optional to add)
 resource "aws_route53_record" "secondary" {
-  zone_id = aws_route53_zone.this.zone_id
-  name    = var.record_name
-  type    = var.record_type
-  ttl     = var.ttl
-
-  set_identifier = "secondary"
-  failover       = "SECONDARY"
-
-  records = var.record_type == "CNAME" ? [var.secondary_fqdn] : [var.secondary_ip]
+  zone_id           = data.aws_route53_zone.this.zone_id
+  name              = local.fqdn
+  type              = "CNAME"
+  ttl               = var.ttl
+  records           = [var.secondary_target]
+  set_identifier    = "secondary"
+  health_check_id   = aws_route53_health_check.secondary.id
+  failover_routing_policy { type = "SECONDARY" }
 }
 
-#################
-# Input Vars    #
-#################
 
-variable "aws_region" {
+hcl
+Copy code
+# --------------------------- Input Variables ---------------------------
+
+variable "region" {
   type        = string
-  description = "AWS region for provider (not used by Route53 itself)"
   default     = "us-east-1"
+  description = "AWS region where Route 53 and health checks will be created."
 }
 
 variable "zone_name" {
   type        = string
-  description = "Hosted zone domain name (e.g., example.com)"
+  description = "DNS hosted zone name (e.g., nit-nis.awscfs.frb.pvt). Must already exist."
 }
 
-variable "record_name" {
+variable "record_host" {
   type        = string
-  description = "Record name (e.g., app.example.com)"
+  description = "Prefix/hostname for the CNAME record (e.g., 'sftp.dev'). Will be combined with zone_name."
 }
 
-variable "record_type" {
+variable "primary_target" {
   type        = string
-  description = "DNS record type: A | AAAA | CNAME"
-  default     = "A"
+  description = "Primary SFTP endpoint hostname (e.g., sftp-west.dev.nit-nis.awscfs.frb.pvt)."
+}
+
+variable "secondary_target" {
+  type        = string
+  description = "Secondary SFTP endpoint hostname (e.g., sftp-east.dev.nit-nis.awscfs.frb.pvt)."
 }
 
 variable "ttl" {
   type        = number
-  description = "TTL in seconds"
   default     = 60
+  description = "Time-to-live (TTL) in seconds for the DNS records."
 }
 
-# PRIMARY endpoint values
-variable "primary_ip" {
-  type        = string
-  description = "Primary IP for A/AAAA records (leave empty if using CNAME)"
-  default     = ""
-}
-
-variable "primary_fqdn" {
-  type        = string
-  description = "Primary hostname for CNAME record (leave empty if using A/AAAA)"
-  default     = ""
-}
-
-# SECONDARY endpoint values
-variable "secondary_ip" {
-  type        = string
-  description = "Secondary IP for A/AAAA records (required when record_type is A/AAAA)"
-  default     = ""
-}
-
-variable "secondary_fqdn" {
-  type        = string
-  description = "Secondary hostname for CNAME record (required when record_type is CNAME)"
-  default     = ""
-}
-
-# Health check configuration
-variable "health_check_type" {
-  type        = string
-  description = "HTTP | HTTPS | TCP"
-  default     = "HTTPS"
-}
-
-variable "health_port" {
+variable "hc_interval" {
   type        = number
-  description = "Port for health check (443 for HTTPS, 80 for HTTP, etc.)"
-  default     = 443
+  default     = 30
+  description = "Health check request interval in seconds. Must be 10 or 30."
 }
 
-variable "health_path" {
-  type        = string
-  description = "Path for HTTP/HTTPS health checks"
-  default     = "/"
+variable "hc_fail_thresh" {
+  type        = number
+  default     = 3
+  description = "Number of consecutive health check failures before marking endpoint as unhealthy."
 }
