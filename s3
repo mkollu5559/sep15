@@ -1,27 +1,40 @@
 modules/s3/variables.tf
 variable "bucket_name" {
   type        = string
-  description = "Name of the S3 bucket to create."
+  description = "S3 bucket name to create."
 }
 
 variable "bucket_policy_json" {
   type        = string
-  description = "Bucket policy JSON to attach to this bucket."
+  description = "Bucket policy JSON to attach."
+}
+
+variable "kms_key_arn" {
+  type        = string
+  description = "KMS key ARN for default encryption. Leave empty to use SSE-S3."
+  default     = ""
 }
 
 variable "replica_bucket_arn" {
   type        = string
-  description = "Destination bucket ARN for CRR (leave empty to disable replication)."
+  description = "Destination bucket ARN for replication. Leave empty to disable replication."
+  default     = ""
+}
+
+variable "replica_kms_key_arn" {
+  type        = string
+  description = "Destination KMS key ARN for replication (required if using SSE-KMS)."
   default     = ""
 }
 
 variable "replication_rule_id" {
   type        = string
-  description = "ID for the replication rule (if enabled)."
+  description = "Replication rule ID."
   default     = "crr"
 }
 
 modules/s3/main.tf
+# Bucket
 resource "aws_s3_bucket" "this" {
   bucket = var.bucket_name
 }
@@ -31,12 +44,24 @@ resource "aws_s3_bucket_versioning" "this" {
   versioning_configuration { status = "Enabled" }
 }
 
+# Encryption
+resource "aws_s3_bucket_server_side_encryption_configuration" "this" {
+  bucket = aws_s3_bucket.this.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = var.kms_key_arn == "" ? "AES256" : "aws:kms"
+      kms_master_key_id = var.kms_key_arn == "" ? null     : var.kms_key_arn
+    }
+  }
+}
+
+# Bucket policy
 resource "aws_s3_bucket_policy" "this" {
   bucket = aws_s3_bucket.this.id
   policy = var.bucket_policy_json
 }
 
-# Replication IAM role (only if replica provided)
+# Replication role
 resource "aws_iam_role" "replication" {
   count = var.replica_bucket_arn == "" ? 0 : 1
   name  = "${var.bucket_name}-replication-role"
@@ -54,16 +79,20 @@ resource "aws_iam_role" "replication" {
 resource "aws_iam_role_policy" "replication" {
   count = var.replica_bucket_arn == "" ? 0 : 1
   role  = aws_iam_role.replication[0].id
+
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
       { Effect = "Allow", Action = ["s3:GetReplicationConfiguration","s3:ListBucket"], Resource = aws_s3_bucket.this.arn },
       { Effect = "Allow", Action = ["s3:GetObjectVersion","s3:GetObjectVersionAcl","s3:GetObjectVersionTagging"], Resource = "${aws_s3_bucket.this.arn}/*" },
-      { Effect = "Allow", Action = ["s3:ReplicateObject","s3:ReplicateDelete","s3:ReplicateTags"], Resource = "${var.replica_bucket_arn}/*" }
+      { Effect = "Allow", Action = ["s3:ReplicateObject","s3:ReplicateDelete","s3:ReplicateTags"], Resource = "${var.replica_bucket_arn}/*" },
+      { Effect = "Allow", Action = ["kms:Decrypt"], Resource = var.kms_key_arn == "" ? "*" : var.kms_key_arn },
+      { Effect = "Allow", Action = ["kms:Encrypt"], Resource = var.replica_kms_key_arn == "" ? "*" : var.replica_kms_key_arn }
     ]
   })
 }
 
+# Replication config
 resource "aws_s3_bucket_replication_configuration" "this" {
   count      = var.replica_bucket_arn == "" ? 0 : 1
   bucket     = aws_s3_bucket.this.id
@@ -74,19 +103,17 @@ resource "aws_s3_bucket_replication_configuration" "this" {
     id     = var.replication_rule_id
     status = "Enabled"
 
-    # Optional: add loop-prevention filter here (prefix/tag) if you want
-    # filter { tag { key = "origin" value = var.bucket_name } }
-
     destination {
-      bucket        = var.replica_bucket_arn
-      storage_class = "STANDARD"
+      bucket             = var.replica_bucket_arn
+      storage_class      = "STANDARD"
+      replica_kms_key_id = var.replica_kms_key_arn == "" ? null : var.replica_kms_key_arn
     }
   }
 }
 
 modules/s3/outputs.tf
 output "bucket_id" {
-  description = "Bucket ID (name)."
+  description = "Bucket name."
   value       = aws_s3_bucket.this.id
 }
 
@@ -95,78 +122,59 @@ output "bucket_arn" {
   value       = aws_s3_bucket.this.arn
 }
 
-caller/providers.tf
-provider "aws" {
-  alias  = "west"
-  region = "us-west-2"
+Root main.tf
+provider "aws" { alias = "west"; region = "us-west-2" }
+provider "aws" { alias = "east"; region = "us-east-1" }
+
+locals {
+  west_bucket = "my-west-bucket"
+  east_bucket = "my-east-bucket"
+
+  west_kms_arn = "arn:aws:kms:us-west-2:111122223333:key/abcd-1234"
+  east_kms_arn = "arn:aws:kms:us-east-1:111122223333:key/efgh-5678"
 }
 
-provider "aws" {
-  alias  = "east"
-  region = "us-east-1"
-}
-
-caller/policy.json.tpl
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "DenyInsecureTransport",
-      "Effect": "Deny",
-      "Principal": "*",
-      "Action": "s3:*",
-      "Resource": [
-        "arn:aws:s3:::${bucket_name}",
-        "arn:aws:s3:::${bucket_name}/*"
-      ],
-      "Condition": { "Bool": { "aws:SecureTransport": "false" } }
-    }
-  ]
-}
-
-caller/main.tf
-# Create WEST
+# WEST bucket with replication to EAST
 module "s3_west" {
   source    = "./modules/s3"
   providers = { aws = aws.west }
 
-  bucket_name = "my-west-bucket"
-
-  # compute ARN in template from the name, no circular refs
+  bucket_name = local.west_bucket
   bucket_policy_json = templatefile("${path.module}/policy.json.tpl", {
-    bucket_name = "my-west-bucket"
+    bucket_name = local.west_bucket
   })
 
-  # wire replication to EAST using EAST module output (defined below)
-  replica_bucket_arn = "" # temporarily empty; we’ll pass real ARN in the EAST call below
+  kms_key_arn         = local.west_kms_arn
+  replica_bucket_arn  = "arn:aws:s3:::${local.east_bucket}"
+  replica_kms_key_arn = local.east_kms_arn
 }
 
-# Create EAST
+# EAST bucket with replication to WEST
 module "s3_east" {
   source    = "./modules/s3"
   providers = { aws = aws.east }
 
-  bucket_name = "my-east-bucket"
-
+  bucket_name = local.east_bucket
   bucket_policy_json = templatefile("${path.module}/policy.json.tpl", {
-    bucket_name = "my-east-bucket"
+    bucket_name = local.east_bucket
   })
 
-  # replicate to WEST using WEST’s output — NO HARDCODE:
-  replica_bucket_arn = module.s3_west.bucket_arn
+  kms_key_arn         = local.east_kms_arn
+  replica_bucket_arn  = "arn:aws:s3:::${local.west_bucket}"
+  replica_kms_key_arn = local.west_kms_arn
 }
 
-# Now add replication WEST->EAST by reconfiguring WEST with the EAST ARN
-# If you prefer one-pass only, swap order: create EAST first, then WEST uses module.s3_east.bucket_arn.
-module "s3_west_replication" {
-  source    = "./modules/s3"
-  providers = { aws = aws.west }
 
-  bucket_name = module.s3_west.bucket_id
+✅ Now:
 
-  bucket_policy_json = templatefile("${path.module}/policy.json.tpl", {
-    bucket_name = module.s3_west.bucket_id
-  })
+One module handles bucket + encryption + replication.
 
-  replica_bucket_arn = module.s3_east.bucket_arn
-}
+Called twice (west + east).
+
+Replication is configured both ways.
+
+No extra module needed.
+
+Do you want me to also add prefix/tag filters inside replication so you don’t get infinite ping-pong replication west↔east?
+
+Is this conversation helpful so far?
