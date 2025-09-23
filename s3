@@ -1,263 +1,154 @@
-###############################################################################
-# S3 Cross-Region Replication (west -> east) with guardrails — single file
-###############################################################################
-
-# -------- Vars --------
-variable "src_bucket_name" {
+Module: modules/s3
+variables.tf
+variable "bucket_name" {
   type        = string
-  description = "Name of the source S3 bucket in the west region (replication will copy from here)."
+  description = "Name of the S3 bucket to create."
 }
 
-variable "dst_bucket_name" {
+variable "bucket_policy_json" {
   type        = string
-  description = "Name of the destination S3 bucket in the east region (replication will copy to here)."
+  description = "Bucket policy JSON to attach."
 }
 
-variable "src_region" {
+variable "replica_bucket_arn" {
   type        = string
-  default     = "us-west-2"
-  description = "AWS region for the source bucket (default: us-west-2)."
+  description = "Destination bucket ARN for replication (optional)."
+  default     = null
 }
 
-variable "dst_region" {
+variable "replication_rule_id" {
   type        = string
-  default     = "us-east-1"
-  description = "AWS region for the destination bucket (default: us-east-1)."
+  description = "Unique ID for the replication rule if enabled."
+  default     = "s3-replication"
 }
 
+main.tf
+# One bucket only
+resource "aws_s3_bucket" "this" {
+  bucket = var.bucket_name
+}
 
-# -------- Providers (west = source, east = destination) --------
+# Enable versioning
+resource "aws_s3_bucket_versioning" "this" {
+  bucket = aws_s3_bucket.this.id
+  versioning_configuration { status = "Enabled" }
+}
+
+# Attach bucket policy
+resource "aws_s3_bucket_policy" "this" {
+  bucket = aws_s3_bucket.this.id
+  policy = var.bucket_policy_json
+}
+
+# Optional replication config
+resource "aws_iam_role" "replication" {
+  count = var.replica_bucket_arn == null ? 0 : 1
+  name  = "${var.bucket_name}-replication-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [{
+      Effect    = "Allow",
+      Principal = { Service = "s3.amazonaws.com" },
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "replication" {
+  count = var.replica_bucket_arn == null ? 0 : 1
+  role  = aws_iam_role.replication[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect   = "Allow",
+        Action   = ["s3:GetReplicationConfiguration","s3:ListBucket"],
+        Resource = aws_s3_bucket.this.arn
+      },
+      {
+        Effect   = "Allow",
+        Action   = ["s3:GetObjectVersion","s3:GetObjectVersionAcl","s3:GetObjectVersionTagging"],
+        Resource = "${aws_s3_bucket.this.arn}/*"
+      },
+      {
+        Effect   = "Allow",
+        Action   = ["s3:ReplicateObject","s3:ReplicateDelete","s3:ReplicateTags"],
+        Resource = "${var.replica_bucket_arn}/*"
+      }
+    ]
+  })
+}
+
+resource "aws_s3_bucket_replication_configuration" "this" {
+  count      = var.replica_bucket_arn == null ? 0 : 1
+  bucket     = aws_s3_bucket.this.id
+  role       = aws_iam_role.replication[0].arn
+  depends_on = [aws_s3_bucket_versioning.this]
+
+  rule {
+    id     = var.replication_rule_id
+    status = "Enabled"
+
+    destination {
+      bucket        = var.replica_bucket_arn
+      storage_class = "STANDARD"
+    }
+  }
+}
+
+outputs.tf
+output "bucket_arn" {
+  value       = aws_s3_bucket.this.arn
+  description = "ARN of this S3 bucket."
+}
+
+output "bucket_id" {
+  value       = aws_s3_bucket.this.id
+  description = "ID of this S3 bucket."
+}
+
+🔹 Caller (root module)
+
+Define your providers:
+
 provider "aws" {
-  region = var.src_region
+  alias  = "west"
+  region = "us-west-2"
 }
 
 provider "aws" {
   alias  = "east"
-  region = var.dst_region
+  region = "us-east-1"
 }
 
-# -------- Destination bucket (EAST) --------
-resource "aws_s3_bucket" "dst" {
-  provider = aws.east
-  bucket   = var.dst_bucket_name
-  force_destroy = false
+
+Call module twice:
+
+# WEST bucket
+module "s3_west" {
+  source            = "./modules/s3"
+  providers         = { aws = aws.west }
+  bucket_name       = "my-west-bucket"
+
+  bucket_policy_json = templatefile("${path.module}/policy.json.tpl", {
+    bucket_arn = "arn:aws:s3:::my-west-bucket"
+  })
+
+  replica_bucket_arn = "arn:aws:s3:::my-east-bucket" # enable replication to east
 }
 
-resource "aws_s3_bucket_versioning" "dst" {
-  provider = aws.east
-  bucket   = aws_s3_bucket.dst.id
-  versioning_configuration { status = "Enabled" }
+# EAST bucket
+module "s3_east" {
+  source            = "./modules/s3"
+  providers         = { aws = aws.east }
+  bucket_name       = "my-east-bucket"
+
+  bucket_policy_json = templatefile("${path.module}/policy.json.tpl", {
+    bucket_arn = "arn:aws:s3:::my-east-bucket"
+  })
+
+  replica_bucket_arn = "arn:aws:s3:::my-west-bucket" # enable replication to west
 }
 
-resource "aws_s3_bucket_public_access_block" "dst" {
-  provider                = aws.east
-  bucket                  = aws_s3_bucket.dst.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-# Guardrails (TLS only + require SSE on PUT)
-data "aws_iam_policy_document" "dst_bucket_policy" {
-  statement {
-    sid     = "DenyInsecureTransport"
-    effect  = "Deny"
-    actions = ["s3:*"]
-    principals { type = "*" identifiers = ["*"] }
-    resources = [
-      aws_s3_bucket.dst.arn,
-      "${aws_s3_bucket.dst.arn}/*"
-    ]
-    condition {
-      test     = "Bool"
-      variable = "aws:SecureTransport"
-      values   = ["false"]
-    }
-  }
-
-  statement {
-    sid     = "DenyUnEncryptedObjectUploads"
-    effect  = "Deny"
-    actions = ["s3:PutObject"]
-    principals { type = "*" identifiers = ["*"] }
-    resources = ["${aws_s3_bucket.dst.arn}/*"]
-    condition {
-      test     = "StringNotEquals"
-      variable = "s3:x-amz-server-side-encryption"
-      values   = ["AES256"]   # keep simple; change to aws:kms + kms key if needed
-    }
-  }
-
-  # Allow the replication role from source account to write objects and ownership override
-  statement {
-    sid    = "AllowReplicationFromSource"
-    effect = "Allow"
-    actions = [
-      "s3:ReplicateObject",
-      "s3:ReplicateDelete",
-      "s3:ObjectOwnerOverrideToBucketOwner",
-      "s3:PutObject"
-    ]
-    principals {
-      type        = "AWS"
-      identifiers = [aws_iam_role.replication.arn]
-    }
-    resources = ["${aws_s3_bucket.dst.arn}/*"]
-  }
-}
-
-resource "aws_s3_bucket_policy" "dst" {
-  provider = aws.east
-  bucket   = aws_s3_bucket.dst.id
-  policy   = data.aws_iam_policy_document.dst_bucket_policy.json
-}
-
-# -------- Source bucket (WEST) --------
-resource "aws_s3_bucket" "src" {
-  bucket = var.src_bucket_name
-  force_destroy = false
-}
-
-resource "aws_s3_bucket_versioning" "src" {
-  bucket = aws_s3_bucket.src.id
-  versioning_configuration { status = "Enabled" }
-}
-
-resource "aws_s3_bucket_public_access_block" "src" {
-  bucket                  = aws_s3_bucket.src.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-# Guardrails on source (TLS + SSE on PUT)
-data "aws_iam_policy_document" "src_bucket_policy" {
-  statement {
-    sid     = "DenyInsecureTransport"
-    effect  = "Deny"
-    actions = ["s3:*"]
-    principals { type = "*" identifiers = ["*"] }
-    resources = [
-      aws_s3_bucket.src.arn,
-      "${aws_s3_bucket.src.arn}/*"
-    ]
-    condition {
-      test     = "Bool"
-      variable = "aws:SecureTransport"
-      values   = ["false"]
-    }
-  }
-
-  statement {
-    sid     = "DenyUnEncryptedObjectUploads"
-    effect  = "Deny"
-    actions = ["s3:PutObject"]
-    principals { type = "*" identifiers = ["*"] }
-    resources = ["${aws_s3_bucket.src.arn}/*"]
-    condition {
-      test     = "StringNotEquals"
-      variable = "s3:x-amz-server-side-encryption"
-      values   = ["AES256"]
-    }
-  }
-}
-
-resource "aws_s3_bucket_policy" "src" {
-  bucket = aws_s3_bucket.src.id
-  policy = data.aws_iam_policy_document.src_bucket_policy.json
-}
-
-# -------- Replication IAM (in source region/account) --------
-data "aws_iam_policy_document" "replication_trust" {
-  statement {
-    effect = "Allow"
-    principals { type = "Service" identifiers = ["s3.amazonaws.com"] }
-    actions = ["sts:AssumeRole"]
-  }
-}
-
-resource "aws_iam_role" "replication" {
-  name               = "s3-replication-role-${var.src_bucket_name}"
-  assume_role_policy = data.aws_iam_policy_document.replication_trust.json
-}
-
-# Permissions required by S3 to replicate objects and read configuration on source
-data "aws_iam_policy_document" "replication_permissions" {
-  statement {
-    sid    = "SourceReads"
-    effect = "Allow"
-    actions = [
-      "s3:GetReplicationConfiguration",
-      "s3:ListBucket"
-    ]
-    resources = [aws_s3_bucket.src.arn]
-  }
-
-  statement {
-    sid    = "SourceObjectReads"
-    effect = "Allow"
-    actions = [
-      "s3:GetObjectVersion",
-      "s3:GetObjectVersionAcl",
-      "s3:GetObjectVersionForReplication",
-      "s3:GetObjectLegalHold",
-      "s3:GetObjectVersionTagging",
-      "s3:GetObjectRetention"
-    ]
-    resources = ["${aws_s3_bucket.src.arn}/*"]
-  }
-
-  statement {
-    sid    = "DestinationWrites"
-    effect = "Allow"
-    actions = [
-      "s3:ReplicateObject",
-      "s3:ReplicateDelete",
-      "s3:ReplicateTags",
-      "s3:ObjectOwnerOverrideToBucketOwner",
-      "s3:PutObject"
-    ]
-    resources = ["${aws_s3_bucket.dst.arn}/*"]
-  }
-}
-
-resource "aws_iam_policy" "replication" {
-  name   = "s3-replication-policy-${var.src_bucket_name}"
-  policy = data.aws_iam_policy_document.replication_permissions.json
-}
-
-resource "aws_iam_role_policy_attachment" "replication" {
-  role       = aws_iam_role.replication.name
-  policy_arn = aws_iam_policy.replication.arn
-}
-
-# -------- Replication configuration (on source bucket) --------
-resource "aws_s3_bucket_replication_configuration" "src" {
-  depends_on = [
-    aws_s3_bucket_versioning.src,
-    aws_s3_bucket_versioning.dst,
-    aws_iam_role_policy_attachment.replication,
-    aws_s3_bucket_policy.dst
-  ]
-
-  bucket = aws_s3_bucket.src.id
-  role   = aws_iam_role.replication.arn
-
-  rule {
-    id     = "replicate-all"
-    status = "Enabled"
-
-    destination {
-      bucket        = aws_s3_bucket.dst.arn
-      storage_class = "STANDARD"
-      account       = null
-      access_control_translation { owner = "Destination" } # set bucket owner on dst
-      encryption_configuration { replica_kms_key_id = null } # set to KMS ARN if using CMK
-    }
-
-    delete_marker_replication { status = "Enabled" }
-    filter { prefix = "" }
-  }
-}
