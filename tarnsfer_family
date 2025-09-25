@@ -1,0 +1,101 @@
+modules/transfer/main.tf
+resource "aws_eip" "this" {
+  count = var.eip_count
+  vpc   = true
+  tags  = var.tags
+}
+
+resource "aws_transfer_server" "sftp" {
+  endpoint_type          = "VPC"
+  host_key               = var.private_key_pem
+  identity_provider_type = "SERVICE_MANAGED"
+
+  endpoint_details {
+    vpc_id                 = var.vpc_id
+    security_group_ids     = var.security_group_ids
+    subnet_ids             = var.subnet_ids
+    address_allocation_ids = aws_eip.this[*].id
+  }
+
+  protocols            = ["SFTP"]
+  logging_role         = var.logging_role
+  security_policy_name = "TransferSecurityPolicy-2018-11"
+
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_log_group" "sftp_logs" {
+  name = "/aws/transfer/${aws_transfer_server.sftp.id}"
+  tags = var.tags
+}
+
+modules/transfer/variables.tf
+variable "vpc_id" {
+  description = "VPC ID where the SFTP server will be created"
+  type        = string
+}
+
+variable "subnet_ids" {
+  description = "List of subnet IDs for the SFTP server"
+  type        = list(string)
+}
+
+variable "private_key_pem" {
+  description = "Private host key for the AWS Transfer SFTP server"
+  type        = string
+}
+
+variable "logging_role" {
+  description = "IAM role ARN used for AWS Transfer Family logging to CloudWatch"
+  type        = string
+}
+
+variable "tags" {
+  description = "A map of tags to assign to all created resources"
+  type        = map(string)
+}
+
+variable "security_group_ids" {
+  description = "List of existing security group IDs to attach to the SFTP server"
+  type        = list(string)
+}
+
+variable "eip_count" {
+  description = "Number of Elastic IPs to allocate for the SFTP server"
+  type        = number
+  default     = 3
+}
+
+modules/transfer/outputs.tf
+output "sftp_server_id" {
+  description = "The ID of the AWS Transfer SFTP server"
+  value       = aws_transfer_server.sftp.id
+}
+
+output "sftp_eip_ids" {
+  description = "List of Elastic IP IDs associated with the SFTP server"
+  value       = aws_eip.this[*].id
+}
+
+output "sftp_security_group_ids" {
+  description = "List of security group IDs attached to the SFTP server"
+  value       = var.security_group_ids
+}
+
+Example usage (main.tf)
+module "sftp_transfer" {
+  source             = "./modules/transfer"
+  vpc_id             = var.vpc_id
+  subnet_ids         = ["subnet-abc123", "subnet-def456"]
+  private_key_pem    = var.private_key_pem
+  logging_role       = var.logging_role
+  security_group_ids = [
+    "sg-11111111",
+    "sg-22222222"
+  ]
+  tags = {
+    Name        = "sftp-server"
+    Environment = "dev"
+  }
+  eip_count = 2
+}
