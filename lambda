@@ -1,0 +1,208 @@
+ modules/log_subscription_lambda/main.tf
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = var.lambda_source_file     # <- pass .py from caller
+  output_path = "${path.module}/.build/${var.function_name}.zip"
+}
+
+resource "aws_lambda_function" "this" {
+  function_name    = var.function_name
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  handler          = var.handler
+  runtime          = var.runtime
+  role             = var.lambda_role_arn
+  memory_size      = var.memory_size
+  timeout          = var.timeout
+  tags             = var.tags
+  kms_key_arn      = var.kms_key_arn
+
+  environment {
+    variables = {
+      DESTINATION_ARN = var.destination_arn
+      ROLE_ARN        = var.cloudwatch_role_arn
+      LOG_GROUP_PREFIX= var.log_group_prefix
+      FILTER_PATTERN  = var.filter_pattern
+      FILTER_NAME     = var.filter_name
+    }
+  }
+
+  vpc_config {
+    subnet_ids         = var.subnet_ids
+    security_group_ids = var.security_group_ids
+  }
+}
+
+resource "aws_cloudwatch_event_rule" "cron_rule" {
+  name                = "${var.rule_name_prefix}-cron"
+  schedule_expression = var.schedule_expression
+  tags                = var.tags
+}
+
+resource "aws_cloudwatch_event_target" "lambda_target" {
+  rule = aws_cloudwatch_event_rule.cron_rule.name
+  arn  = aws_lambda_function.this.arn
+}
+
+resource "aws_lambda_permission" "allow_events" {
+  statement_id  = "AllowExecutionFromCloudWatch"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.this.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.cron_rule.arn
+}
+hcl
+Copy code
+
+# modules/log_subscription_lambda/outputs.tf
+output "function_arn" { value = aws_lambda_function.this.arn }
+output "function_name" { value = aws_lambda_function.this.function_name }
+output "rule_arn" { value = aws_cloudwatch_event_rule.cron_rule.arn }
+hcl
+Copy code
+# calling module (example)
+module "log_subscription_lambda" {
+  source = "./modules/log_subscription_lambda"
+
+  lambda_source_file = "${path.module}/source_code/cloudwatch-log-subscription.py"
+  function_name      = "sftp_efm_${var.name_prefix}-log-subscription"
+  handler            = "cloudwatch-log-subscription.lambda_handler"
+  runtime            = "python3.11"
+  lambda_role_arn    = var.lambda_role_arn
+  kms_key_arn        = var.kms_key_arn
+  memory_size        = 128
+  timeout            = 300
+
+  destination_arn     = var.destination_arn
+  cloudwatch_role_arn = var.cloudwatch_role_arn
+  log_group_prefix    = var.log_group_prefix
+  filter_pattern      = var.filter_pattern
+  filter_name         = "Cloudwatch_efm_sftp_AutoSubscription"
+
+  subnet_ids         = var.subnet_ids
+  security_group_ids = var.security_group_ids
+
+  rule_name_prefix    = "sftp_efm_log_${var.name_prefix}"
+  schedule_expression = "cron(0 4 * * ? *)"
+  tags                = var.tags
+}
+
+
+
+
+
+
+
+Ask ChatGPT
+You said:
+give variable with description, is that how your standards are?
+
+
+ChatGPT said:
+Got it — here’s your module with proper variable descriptions so it follows Terraform best practices/standards.
+
+hcl
+Copy code
+# modules/log_subscription_lambda/variables.tf
+
+variable "lambda_source_file" {
+  description = "Path to the Lambda source file (.py) that should be zipped and deployed"
+  type        = string
+}
+
+variable "function_name" {
+  description = "Name of the Lambda function"
+  type        = string
+}
+
+variable "handler" {
+  description = "Lambda function handler (e.g. file_name.function_handler)"
+  type        = string
+}
+
+variable "runtime" {
+  description = "Runtime environment for the Lambda function"
+  type        = string
+  default     = "python3.11"
+}
+
+variable "lambda_role_arn" {
+  description = "IAM role ARN that the Lambda function will assume"
+  type        = string
+}
+
+variable "memory_size" {
+  description = "Amount of memory (MB) allocated to the Lambda function"
+  type        = number
+  default     = 128
+}
+
+variable "timeout" {
+  description = "Timeout (seconds) for the Lambda execution"
+  type        = number
+  default     = 300
+}
+
+variable "kms_key_arn" {
+  description = "KMS key ARN used for encrypting Lambda environment variables"
+  type        = string
+  default     = null
+}
+
+variable "destination_arn" {
+  description = "Destination ARN for the CloudWatch log subscription"
+  type        = string
+}
+
+variable "cloudwatch_role_arn" {
+  description = "IAM role ARN for CloudWatch Logs to assume"
+  type        = string
+}
+
+variable "log_group_prefix" {
+  description = "Prefix for the CloudWatch log groups to subscribe"
+  type        = string
+}
+
+variable "filter_pattern" {
+  description = "Filter pattern for the log subscription"
+  type        = string
+  default     = ""
+}
+
+variable "filter_name" {
+  description = "Name for the log filter subscription"
+  type        = string
+  default     = "Cloudwatch_efm_sftp_AutoSubscription"
+}
+
+variable "subnet_ids" {
+  description = "List of subnet IDs for Lambda VPC configuration"
+  type        = list(string)
+  default     = []
+}
+
+variable "security_group_ids" {
+  description = "List of security group IDs for Lambda VPC configuration"
+  type        = list(string)
+  default     = []
+}
+
+variable "rule_name_prefix" {
+  description = "Prefix used to name the CloudWatch cron rule"
+  type        = string
+}
+
+variable "schedule_expression" {
+  description = "Schedule expression for CloudWatch event rule (e.g. cron or rate)"
+  type        = string
+}
+
+variable "tags" {
+  description = "Map of tags to assign to resources"
+  type        = map(string)
+  default     = {}
+}
+
+
+
