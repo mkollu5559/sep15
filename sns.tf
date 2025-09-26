@@ -54,11 +54,6 @@ module "efm_team_notifications" {
   topic_name        = "EFM_Team_Notification_All_Lambda_Functions"
   kms_key_id        = var.kms_key_id
   subscriber_emails = [
-    "johan.kayati@sf.frb.org",
-    "tariq.sanda@sf.frb.org",
-    "rishi.sehgal@sf.frb.org",
-    "lucas.galmarini@sf.frb.org",
-    "stephen.litzkow@sf.frb.org",
   ]
   tags = var.tags_west
 }
