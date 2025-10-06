@@ -1,0 +1,91 @@
+# EAST users
+module "sftp_users_east" {
+  for_each = var.sftp_users_east
+
+  source     = "./modules/sftp_user"
+  providers  = { aws = aws.east }
+
+  server_id           = var.server_id_east
+  sftp_user_name      = each.value.sftp_user_name
+  sftp_home_dir       = each.value.sftp_home_dir
+  sftp_role           = var.sftp_role
+  ssh_public_key_file = each.value.ssh_public_key_file
+  tags                = var.tags_east
+}
+
+# WEST users
+module "sftp_users_west" {
+  for_each = var.sftp_users_west
+
+  source     = "./modules/sftp_user"
+  providers  = { aws = aws.west }
+
+  server_id           = var.server_id_west
+  sftp_user_name      = each.value.sftp_user_name
+  sftp_home_dir       = each.value.sftp_home_dir
+  sftp_role           = var.sftp_role
+  ssh_public_key_file = each.value.ssh_public_key_file
+  tags                = var.tags_west
+}
+🧠 variables.tf
+hcl
+Copy code
+variable "sftp_users_east" {
+  description = "Map of SFTP users for east region"
+  type = map(object({
+    sftp_user_name      = string
+    sftp_home_dir       = string
+    ssh_public_key_file = string
+  }))
+}
+
+variable "sftp_users_west" {
+  description = "Map of SFTP users for west region"
+  type = map(object({
+    sftp_user_name      = string
+    sftp_home_dir       = string
+    ssh_public_key_file = string
+  }))
+}
+
+variable "server_id_east" { type = string }
+variable "server_id_west" { type = string }
+variable "sftp_role" { type = string }
+variable "tags_east" { type = map(string) }
+variable "tags_west" { type = map(string) }
+📦 .tfvars example
+hcl
+Copy code
+sftp_users_east = {
+  east_user1 = {
+    sftp_user_name      = "east-user-1"
+    sftp_home_dir       = "east/home1"
+    ssh_public_key_file = "ssh_keys/dev/east-user1.txt"
+  }
+  east_user2 = {
+    sftp_user_name      = "east-user-2"
+    sftp_home_dir       = "east/home2"
+    ssh_public_key_file = "ssh_keys/dev/east-user2.txt"
+  }
+}
+
+sftp_users_west = {
+  west_user1 = {
+    sftp_user_name      = "west-user-1"
+    sftp_home_dir       = "west/home1"
+    ssh_public_key_file = "ssh_keys/dev/west-user1.txt"
+  }
+  west_user2 = {
+    sftp_user_name      = "west-user-2"
+    sftp_home_dir       = "west/home2"
+    ssh_public_key_file = "ssh_keys/dev/west-user2.txt"
+  }
+}
+
+server_id_east = "srv-123-east"
+server_id_west = "srv-456-west"
+sftp_role      = "arn:aws:iam::123456789012:role/sftp-access"
+tags_east      = { Environment = "dev", Region = "east" }
+tags_west      = { Environment = "dev", Region = "west" }
+✅ Result
+No duplicate folders
