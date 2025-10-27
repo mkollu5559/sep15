@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# Get SSH ports from config or default to 22
+ports=($(grep -hPo '^(Port|LocalPort)\s+\K\d+' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null))
+if [ ${#ports[@]} -eq 0 ]; then
+  ports=(22)
+fi
+
+for port in "${ports[@]}"; do
+  echo "Checking port: $port"
+  /usr/sbin/sshd -T -C "user=root" -C "host=$(hostname)" -C "addr=$(grep -m1 $(hostname) /etc/hosts | awk '{print $1}')" -C "lport=$port" \
+    | grep -i permituserenvironment || echo "fail: no results returned"
+done
