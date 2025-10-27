@@ -1,13 +1,40 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Get SSH ports from config or default to 22
-ports=($(grep -hPo '^(Port|LocalPort)\s+\K\d+' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null))
-if [ ${#ports[@]} -eq 0 ]; then
-  ports=(22)
-fi
+# Get all configured SSH ports; default to 22 if none found
+mapfile -t ports < <(
+  awk '
+    /^[[:space:]]*#/ {next}
+    tolower($1)=="port" {print $2}
+  ' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null
+)
+[[ ${#ports[@]} -eq 0 ]] && ports=(22)
 
+host="$(hostname -f 2>/dev/null || hostname)"
+addr="$(getent hosts "$host" | awk "NR==1{print \$1}")"
+[[ -z "$addr" ]] && addr="127.0.0.1"
+
+bad=0
 for port in "${ports[@]}"; do
-  echo "Checking port: $port"
-  /usr/sbin/sshd -T -C "user=root" -C "host=$(hostname)" -C "addr=$(grep -m1 $(hostname) /etc/hosts | awk '{print $1}')" -C "lport=$port" \
-    | grep -i permituserenvironment || echo "fail: no results returned"
+  val=$(/usr/sbin/sshd -T \
+        -C "user=root" \
+        -C "host=$host" \
+        -C "addr=$addr" \
+        -C "lport=$port" | awk '/^permituserenvironment /{print $2}')
+
+  # If sshd -T didn’t emit the key, treat as unknown
+  if [[ -z "${val:-}" ]]; then
+    echo "port $port: PermitUserEnvironment = <unknown>"
+    bad=1
+    continue
+  fi
+
+  if [[ "$val" == "yes" ]]; then
+    echo "port $port: PermitUserEnvironment = yes ✅"
+  else
+    echo "port $port: PermitUserEnvironment = no ❌"
+    bad=1
+  fi
 done
+
+exit "$bad"
