@@ -205,4 +205,126 @@ variable "tags" {
 }
 
 
+-======================================================================================
+
+# ============================================
+# Reusable Lambda Module
+# ============================================
+
+variable "lambda_name" {
+  description = "Name of the Lambda function"
+  type        = string
+}
+
+variable "lambda_role_arn" {
+  description = "IAM role ARN for Lambda"
+  type        = string
+}
+
+variable "handler" {
+  description = "Lambda handler"
+  type        = string
+}
+
+variable "runtime" {
+  description = "Runtime for the Lambda"
+  type        = string
+}
+
+variable "filename" {
+  description = "Path to Lambda deployment package"
+  type        = string
+}
+
+variable "enable_lambda_permission" {
+  description = "Enable S3 Lambda permission block"
+  type        = bool
+  default     = false
+}
+
+variable "enable_cloudwatch_event" {
+  description = "Enable CloudWatch event trigger"
+  type        = bool
+  default     = false
+}
+
+variable "source_account" {
+  description = "AWS source account ID"
+  type        = string
+}
+
+variable "s3_bucket_name" {
+  description = "S3 bucket name for source ARN if S3 trigger enabled"
+  type        = string
+  default     = ""
+}
+
+variable "schedule_rate_minutes" {
+  description = "Rate in minutes for CloudWatch event rule"
+  type        = number
+  default     = 10
+}
+
+variable "tags" {
+  description = "Tags for the resources"
+  type        = map(string)
+  default     = {}
+}
+
+# --------------------------------------------
+# Lambda Function
+# --------------------------------------------
+resource "aws_lambda_function" "this" {
+  function_name = var.lambda_name
+  handler       = var.handler
+  role          = var.lambda_role_arn
+  runtime       = var.runtime
+  filename      = var.filename
+  tags          = var.tags
+}
+
+# --------------------------------------------
+# Lambda Permission (optional)
+# --------------------------------------------
+resource "aws_lambda_permission" "s3_trigger" {
+  count = var.enable_lambda_permission ? 1 : 0
+
+  statement_id  = "${var.lambda_name}-s3-trigger"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.this.function_name
+  principal     = "s3.amazonaws.com"
+  source_arn    = "arn:aws:s3:::${var.s3_bucket_name}"
+  source_account = var.source_account
+}
+
+# --------------------------------------------
+# CloudWatch Event Rule (optional)
+# --------------------------------------------
+resource "aws_cloudwatch_event_rule" "lambda_schedule" {
+  count               = var.enable_cloudwatch_event ? 1 : 0
+  name                = "${var.lambda_name}-schedule"
+  description         = "Invoke ${var.lambda_name} every ${var.schedule_rate_minutes} minutes"
+  schedule_expression = "rate(${var.schedule_rate_minutes} minutes)"
+  tags                = var.tags
+}
+
+resource "aws_cloudwatch_event_target" "lambda_target" {
+  count = var.enable_cloudwatch_event ? 1 : 0
+
+  rule      = aws_cloudwatch_event_rule.lambda_schedule[0].name
+  target_id = "lambda"
+  arn       = aws_lambda_function.this.arn
+}
+
+resource "aws_lambda_permission" "allow_cloudwatch" {
+  count = var.enable_cloudwatch_event ? 1 : 0
+
+  statement_id  = "${var.lambda_name}-AllowExecutionFromCloudWatch"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.this.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.lambda_schedule[0].arn
+  source_account = var.source_account
+}
+
 
