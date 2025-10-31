@@ -22,7 +22,9 @@
         "lambda:InvokeFunction",
         "lambda:InvokeAsync"
       ],
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:lambda:us-east-1:123456789012:function:*"
+      ]
     },
     {
       "Sid": "DynamoDBRW",
@@ -38,7 +40,9 @@
         "dynamodb:BatchWriteItem",
         "dynamodb:DescribeTable"
       ],
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:dynamodb:us-east-1:123456789012:table/*"
+      ]
     },
     {
       "Sid": "CloudWatchLogs",
@@ -50,7 +54,9 @@
         "logs:DescribeLogGroups",
         "logs:DescribeLogStreams"
       ],
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:logs:us-east-1:123456789012:log-group:/aws/states/*:*"
+      ]
     }
   ]
 }
