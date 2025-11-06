@@ -416,14 +416,55 @@ locals {
   )
 
   tags_local = merge(
-    {
-      Env    = var.env
-      Region = var.region
-      Role   = local.role_name
-      Bucket = local.s3_bucket_name
-    },
+    (
+      var.env == "test" && var.region == "east" ? {
+        Env        = "test"
+        Region     = "east"
+        Role       = local.role_name
+        Bucket     = local.s3_bucket_name
+        Department = "QA-East"
+        Owner      = "TestTeam-East"
+      } :
+      var.env == "test" && var.region == "west" ? {
+        Env        = "test"
+        Region     = "west"
+        Role       = local.role_name
+        Bucket     = local.s3_bucket_name
+        Department = "QA-West"
+        Owner      = "TestTeam-West"
+      } :
+      var.env == "prod" && var.region == "east" ? {
+        Env        = "prod"
+        Region     = "east"
+        Role       = local.role_name
+        Bucket     = local.s3_bucket_name
+        Department = "Prod-East"
+        Owner      = "OpsTeam-East"
+      } :
+      var.env == "prod" && var.region == "west" ? {
+        Env        = "prod"
+        Region     = "west"
+        Role       = local.role_name
+        Bucket     = local.s3_bucket_name
+        Department = "Prod-West"
+        Owner      = "OpsTeam-West"
+      } :
+      {
+        Env      = var.env
+        Region   = var.region
+        Role     = local.role_name
+        Bucket   = local.s3_bucket_name
+      }
+    ),
     var.tags
   )
+
+
+
+
+
+
+
 }
 
 output "role_name" {
