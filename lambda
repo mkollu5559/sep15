@@ -391,81 +391,72 @@ locals {
     "test-${var.env}-${var.region}-bucket"
   )
 
-  kms_key_arn_local = (
-    var.env == "test" && var.region == "east" ? "arn:aws:kms:us-east-1:111111111111:key/test-east" :
-    var.env == "test" && var.region == "west" ? "arn:aws:kms:us-west-2:111111111111:key/test-west" :
-    var.env == "prod" && var.region == "east" ? "arn:aws:kms:us-east-1:222222222222:key/prod-east" :
-    var.env == "prod" && var.region == "west" ? "arn:aws:kms:us-west-2:222222222222:key/prod-west" :
-    var.kms_key_arn
+  kms_key_arn_local = var.kms_key_arn != "" ? var.kms_key_arn : (
+    var.env == "test" && var.region == "east" ? "arn:aws:kms:us-east-1:111111111111:key/test-test-east" :
+    var.env == "test" && var.region == "west" ? "arn:aws:kms:us-west-2:111111111111:key/test-test-west" :
+    var.env == "prod" && var.region == "east" ? "arn:aws:kms:us-east-1:222222222222:key/test-prod-east" :
+    var.env == "prod" && var.region == "west" ? "arn:aws:kms:us-west-2:222222222222:key/test-prod-west" :
+    ""
   )
 
-  subnet_ids_local = (
+  subnet_ids_local = length(var.subnet_ids) > 0 ? var.subnet_ids : (
     var.env == "test" && var.region == "east" ? ["subnet-test-east-1", "subnet-test-east-2"] :
     var.env == "test" && var.region == "west" ? ["subnet-test-west-1", "subnet-test-west-2"] :
     var.env == "prod" && var.region == "east" ? ["subnet-prod-east-1", "subnet-prod-east-2"] :
     var.env == "prod" && var.region == "west" ? ["subnet-prod-west-1", "subnet-prod-west-2"] :
-    var.subnet_ids
+    []
   )
 
-  security_group_ids_local = (
+  security_group_ids_local = length(var.security_group_ids) > 0 ? var.security_group_ids : (
     var.env == "test" && var.region == "east" ? ["sg-test-east"] :
     var.env == "test" && var.region == "west" ? ["sg-test-west"] :
     var.env == "prod" && var.region == "east" ? ["sg-prod-east"] :
     var.env == "prod" && var.region == "west" ? ["sg-prod-west"] :
-    var.security_group_ids
+    []
   )
 
   tags_local = merge(
     (
       var.env == "test" && var.region == "east" ? {
-        Env        = "test"
-        Region     = "east"
-        Role       = local.role_name
-        Bucket     = local.s3_bucket_name
-        Department = "QA-East"
-        Owner      = "TestTeam-East"
+        Env    = "test"
+        Region = "east"
+        Role   = local.role_name
+        Bucket = local.s3_bucket_name
+        KMS    = local.kms_key_arn_local
       } :
       var.env == "test" && var.region == "west" ? {
-        Env        = "test"
-        Region     = "west"
-        Role       = local.role_name
-        Bucket     = local.s3_bucket_name
-        Department = "QA-West"
-        Owner      = "TestTeam-West"
+        Env    = "test"
+        Region = "west"
+        Role   = local.role_name
+        Bucket = local.s3_bucket_name
+        KMS    = local.kms_key_arn_local
       } :
       var.env == "prod" && var.region == "east" ? {
-        Env        = "prod"
-        Region     = "east"
-        Role       = local.role_name
-        Bucket     = local.s3_bucket_name
-        Department = "Prod-East"
-        Owner      = "OpsTeam-East"
+        Env    = "prod"
+        Region = "east"
+        Role   = local.role_name
+        Bucket = local.s3_bucket_name
+        KMS    = local.kms_key_arn_local
       } :
       var.env == "prod" && var.region == "west" ? {
-        Env        = "prod"
-        Region     = "west"
-        Role       = local.role_name
-        Bucket     = local.s3_bucket_name
-        Department = "Prod-West"
-        Owner      = "OpsTeam-West"
+        Env    = "prod"
+        Region = "west"
+        Role   = local.role_name
+        Bucket = local.s3_bucket_name
+        KMS    = local.kms_key_arn_local
       } :
       {
-        Env      = var.env
-        Region   = var.region
-        Role     = local.role_name
-        Bucket   = local.s3_bucket_name
+        Env    = var.env
+        Region = var.region
+        Role   = local.role_name
+        Bucket = local.s3_bucket_name
+        KMS    = local.kms_key_arn_local
       }
     ),
     var.tags
   )
-
-
-
-
-
-
-
 }
+
 
 output "role_name" {
   value = local.role_name
