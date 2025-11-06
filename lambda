@@ -327,4 +327,128 @@ resource "aws_lambda_permission" "allow_cloudwatch" {
   source_account = var.source_account
 }
 
+==============================================
+
+
+variable "env" {
+  description = "Environment name (e.g. test, prod)"
+  type        = string
+}
+
+variable "region" {
+  description = "Region name (e.g. east, west)"
+  type        = string
+}
+
+variable "custom_role_name" {
+  description = "Optional custom role name override"
+  type        = string
+  default     = ""
+}
+
+variable "custom_bucket_name" {
+  description = "Optional custom S3 bucket name override"
+  type        = string
+  default     = ""
+}
+
+variable "kms_key_arn" {
+  description = "KMS Key ARN for encryption"
+  type        = string
+  default     = ""
+}
+
+variable "subnet_ids" {
+  description = "List of subnet IDs"
+  type        = list(string)
+  default     = []
+}
+
+variable "security_group_ids" {
+  description = "List of security group IDs"
+  type        = list(string)
+  default     = []
+}
+
+variable "tags" {
+  description = "Common resource tags"
+  type        = map(string)
+  default     = {}
+}
+
+locals {
+  role_name = var.custom_role_name != "" ? var.custom_role_name : (
+    var.env == "test" ? "test-test" :
+    var.env == "prod" ? "test-prod" :
+    "test-${var.env}"
+  )
+
+  s3_bucket_name = var.custom_bucket_name != "" ? var.custom_bucket_name : (
+    var.env == "test" && var.region == "east" ? "test-test-east-bucket" :
+    var.env == "test" && var.region == "west" ? "test-test-west-bucket" :
+    var.env == "prod" && var.region == "east" ? "test-prod-east-bucket" :
+    var.env == "prod" && var.region == "west" ? "test-prod-west-bucket" :
+    "test-${var.env}-${var.region}-bucket"
+  )
+
+  kms_key_arn_local = (
+    var.env == "test" && var.region == "east" ? "arn:aws:kms:us-east-1:111111111111:key/test-east" :
+    var.env == "test" && var.region == "west" ? "arn:aws:kms:us-west-2:111111111111:key/test-west" :
+    var.env == "prod" && var.region == "east" ? "arn:aws:kms:us-east-1:222222222222:key/prod-east" :
+    var.env == "prod" && var.region == "west" ? "arn:aws:kms:us-west-2:222222222222:key/prod-west" :
+    var.kms_key_arn
+  )
+
+  subnet_ids_local = (
+    var.env == "test" && var.region == "east" ? ["subnet-test-east-1", "subnet-test-east-2"] :
+    var.env == "test" && var.region == "west" ? ["subnet-test-west-1", "subnet-test-west-2"] :
+    var.env == "prod" && var.region == "east" ? ["subnet-prod-east-1", "subnet-prod-east-2"] :
+    var.env == "prod" && var.region == "west" ? ["subnet-prod-west-1", "subnet-prod-west-2"] :
+    var.subnet_ids
+  )
+
+  security_group_ids_local = (
+    var.env == "test" && var.region == "east" ? ["sg-test-east"] :
+    var.env == "test" && var.region == "west" ? ["sg-test-west"] :
+    var.env == "prod" && var.region == "east" ? ["sg-prod-east"] :
+    var.env == "prod" && var.region == "west" ? ["sg-prod-west"] :
+    var.security_group_ids
+  )
+
+  tags_local = merge(
+    {
+      Env    = var.env
+      Region = var.region
+      Role   = local.role_name
+      Bucket = local.s3_bucket_name
+    },
+    var.tags
+  )
+}
+
+output "role_name" {
+  value = local.role_name
+}
+
+output "s3_bucket_name" {
+  value = local.s3_bucket_name
+}
+
+output "kms_key_arn" {
+  value = local.kms_key_arn_local
+}
+
+output "subnet_ids" {
+  value = local.subnet_ids_local
+}
+
+output "security_group_ids" {
+  value = local.security_group_ids_local
+}
+
+output "tags" {
+  value = local.tags_local
+}
+
+
 
