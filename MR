@@ -1,0 +1,9 @@
+def write_history_record(table, transfer_id, status, meta_record, timestamp):
+    table.put_item(Item={
+        "LockID": str(uuid.uuid4()),
+        "transferId": transfer_id,
+        "status": status,
+        "timestamp": timestamp,
+        "sourceBucket": meta_record.get("sourceBucket"),
+        "fileName": meta_record.get("fileName")
+    })
