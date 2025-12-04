@@ -1,22 +1,49 @@
-variable "sftp_secret_name" {}
-variable "home_directory" {}
-variable "ftp_password" {
-  sensitive = true
+variable "sftp_secret_name" {
+  type        = string
+  description = "Name of the AWS Secrets Manager secret that stores SFTP user configuration."
 }
-variable "role_arn" {}
-variable "sftp_key" {}
 
-variable "bucket_name" {}
-variable "prefix" {}
+variable "home_directory" {
+  type        = string
+  description = "SFTP user's home directory path (must match S3 prefix mapping)."
+}
+
+variable "ftp_password" {
+  type        = string
+  sensitive   = true
+  description = "Password for SFTP user (only used when password auth is enabled)."
+}
+
+variable "role_arn" {
+  type        = string
+  description = "IAM role ARN used by AWS Transfer Family for this SFTP user."
+}
+
+variable "sftp_key" {
+  type        = string
+  description = "SSH public key for SFTP user (used for key-based auth)."
+}
+
+variable "bucket_name" {
+  type        = string
+  description = "Name of the S3 bucket used for Transfer Family home directory and access policy."
+}
+
+variable "prefix" {
+  type        = string
+  description = "S3 prefix (folder) that the SFTP user is restricted to inside the bucket."
+}
 
 variable "allowed_actions" {
-  type    = list(string)
-  default = ["s3:GetObject"]
+  type        = list(string)
+  default     = ["s3:GetObject"]
+  description = "List of allowed S3 actions inside the user's prefix (e.g., s3:GetObject, s3:PutObject)."
 }
 
 variable "extra_fields" {
-  type    = map(any)
-  default = {}
+  type        = map(any)
+  default     = {}
+  description = "Optional extra key/value pairs to include in the Secrets Manager secret JSON."
 }
 
 locals {
