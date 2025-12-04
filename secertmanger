@@ -46,6 +46,13 @@ variable "extra_fields" {
   description = "Optional extra key/value pairs to include in the Secrets Manager secret JSON."
 }
 
+variable "sftp_server" {
+  type        = bool
+  default     = false
+  description = "Enable SFTP secret creation when true."
+}
+
+
 locals {
   policy_template = {
     Version = "2012-10-17"
@@ -80,10 +87,12 @@ locals {
 }
 
 resource "aws_secretsmanager_secret" "sftp_user" {
-  name = var.sftp_secret_name
+  count = var.sftp_server ? 1 : 0
+  name  = var.sftp_secret_name
 }
 
 resource "aws_secretsmanager_secret_version" "sftp_user_version" {
-  secret_id     = aws_secretsmanager_secret.sftp_user.id
+  count        = var.sftp_server ? 1 : 0
+  secret_id    = aws_secretsmanager_secret.sftp_user[0].id
   secret_string = jsonencode(local.secret_payload)
 }
