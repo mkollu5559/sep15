@@ -96,3 +96,115 @@ resource "aws_secretsmanager_secret_version" "sftp_user_version" {
   secret_id    = aws_secretsmanager_secret.sftp_user[0].id
   secret_string = jsonencode(local.secret_payload)
 }
+
+
+
+
+
+
+
+
+
+d###########################################
+# vars.tf
+###########################################
+variable "function_name" {
+  description = "Lambda function name"
+  type        = string
+}
+
+variable "lambda_source_file" {
+  description = "Source file for lambda zip"
+  type        = string
+}
+
+variable "handler" {
+  description = "Lambda handler"
+  type        = string
+}
+
+variable "runtime" {
+  description = "Lambda runtime"
+  type        = string
+}
+
+variable "memory_size" {
+  description = "Lambda memory size"
+  type        = number
+}
+
+variable "timeout" {
+  description = "Lambda timeout in seconds"
+  type        = number
+}
+
+variable "log_retention_in_days" {
+  description = "Log retention days"
+  type        = number
+}
+
+variable "env_vars" {
+  description = "Environment variables for Lambda"
+  type        = map(string)
+  default     = {}
+}
+
+variable "ssh_key" {
+  description = "SSH private key contents"
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+###########################################
+# locals.tf
+###########################################
+locals {
+  create_ssh_secret = var.ssh_key != null && var.ssh_key != ""
+
+  final_env_vars = merge(
+    var.env_vars,
+    local.create_ssh_secret ? {
+      SSH_SECRET_ARN = aws_secretsmanager_secret.ssh[0].arn
+    } : {}
+  )
+}
+
+###########################################
+# main.tf
+###########################################
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = var.lambda_source_file
+  output_path = "${path.module}/.build/${var.function_name}.zip"
+}
+
+resource "aws_secretsmanager_secret" "ssh" {
+  count = local.create_ssh_secret ? 1 : 0
+  name  = "${var.function_name}-ssh-key"
+}
+
+resource "aws_secretsmanager_secret_version" "ssh_ver" {
+  count         = local.create_ssh_secret ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.ssh[0].id
+  secret_string = jsonencode({ ssh_key = var.ssh_key })
+}
+
+resource "aws_lambda_function" "lambda" {
+  function_name    = var.function_name
+  filename         = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  handler          = "${var.handler}.handler"
+  runtime          = var.runtime
+  memory_size      = var.memory_size
+  timeout          = var.timeout
+
+  environment {
+    variables = local.final_env_vars
+  }
+}
+
+resource "aws_cloudwatch_log_group" "lambda_logs" {
+  name              = "/aws/lambda/${aws_lambda_function.lambda.function_name}"
+  retention_in_days = var.log_retention_in_days
+}
