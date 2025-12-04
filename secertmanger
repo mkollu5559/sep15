@@ -1,0 +1,62 @@
+variable "sftp_secret_name" {}
+variable "home_directory" {}
+variable "ftp_password" {
+  sensitive = true
+}
+variable "role_arn" {}
+variable "sftp_key" {}
+
+variable "bucket_name" {}
+variable "prefix" {}
+
+variable "allowed_actions" {
+  type    = list(string)
+  default = ["s3:GetObject"]
+}
+
+variable "extra_fields" {
+  type    = map(any)
+  default = {}
+}
+
+locals {
+  policy_template = {
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = "arn:aws:s3:::${var.bucket_name}"
+        Condition = {
+          StringLike = {
+            "s3:prefix" = ["${var.prefix}"]
+          }
+        }
+      },
+      {
+        Effect   = "Allow"
+        Action   = var.allowed_actions
+        Resource = "arn:aws:s3:::${var.bucket_name}/${var.prefix}*"
+      }
+    ]
+  }
+
+  base_values = {
+    HomeDirectory = var.home_directory
+    FTPPassword   = var.ftp_password
+    Policy        = jsonencode(local.policy_template)
+    Role          = var.role_arn
+    SFTPKey       = var.sftp_key
+  }
+
+  secret_payload = merge(local.base_values, var.extra_fields)
+}
+
+resource "aws_secretsmanager_secret" "sftp_user" {
+  name = var.sftp_secret_name
+}
+
+resource "aws_secretsmanager_secret_version" "sftp_user_version" {
+  secret_id     = aws_secretsmanager_secret.sftp_user.id
+  secret_string = jsonencode(local.secret_payload)
+}
