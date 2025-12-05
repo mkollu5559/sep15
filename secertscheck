@@ -26,3 +26,28 @@ locals {
     tobool("Missing required SFTP fields: ${join(", ", local.all_missing)}") :
     true
 }
+
+
+
+variable "sftp_server_secerts" {
+  type        = bool
+  description = "Enable SFTP server secrets"
+  default     = false
+
+  validation {
+    condition = (
+      !var.sftp_server_secerts ||
+      (
+        var.sftp_secret_name != null && var.sftp_secret_name != "" &&
+        var.home_directory   != null && var.home_directory   != "" &&
+        var.sftp_role        != null && var.sftp_role        != "" &&
+        (
+          (var.sftp_password != null && var.sftp_password != "") ||
+          (var.sftp_key      != null && var.sftp_key      != "")
+        )
+      )
+    )
+
+    error_message = "Missing required SFTP fields: sftp_secret_name, home_directory, sftp_role, and either sftp_password or sftp_key."
+  }
+}
