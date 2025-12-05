@@ -1,0 +1,28 @@
+locals {
+  # fields that must ALWAYS be passed when sftp_server_secerts = true
+  required_always = {
+    sftp_secret_name = var.sftp_secret_name
+    home_directory   = var.home_directory
+    sftp_role        = var.sftp_role
+  }
+
+  missing_always = [
+    for k, v in local.required_always :
+    k if var.sftp_server_secerts && (v == null || v == "")
+  ]
+
+  # password/key must have at least ONE
+  has_password = var.sftp_password != null && var.sftp_password != ""
+  has_key      = var.sftp_key != null && var.sftp_key != ""
+
+  missing_auth =
+    var.sftp_server_secerts && !(local.has_password || local.has_key) ?
+    ["sftp_password_or_sftp_key"] : []
+
+  all_missing = concat(local.missing_always, local.missing_auth)
+
+  validate_sftp =
+    length(local.all_missing) > 0 ?
+    tobool("Missing required SFTP fields: ${join(", ", local.all_missing)}") :
+    true
+}
