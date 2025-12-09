@@ -1,0 +1,80 @@
+############ variables ############
+
+variable "create_sftp_secrets" {
+  type        = bool
+  description = "true = create new sftp ssh secret, false = use existing"
+}
+
+variable "sftp_secret_name" {
+  type        = string
+  description = "name to create OR existing secret name to use"
+}
+
+variable "ssh_key" {
+  type        = string
+  description = "ssh key file path like alex.pub when creating new secret"
+  default     = null
+}
+
+
+############ locals ############
+
+locals {
+  create_lambda_ssh_secret = var.create_sftp_secrets && var.ssh_key != null && var.ssh_key != ""
+
+  ssh_secret_arn = local.create_lambda_ssh_secret ?
+    aws_secretsmanager_secret.lambda_ssh_secret[0].arn :
+    data.aws_secretsmanager_secret.existing_sftp_secret.arn
+
+  final_env_vars = merge(
+    var.env_vars,
+    {
+      ssh_key = local.ssh_secret_arn
+    }
+  )
+}
+
+
+############ get existing secret if not creating ############
+
+data "aws_secretsmanager_secret" "existing_sftp_secret" {
+  count = var.create_sftp_secrets ? 0 : 1
+  name  = var.sftp_secret_name
+}
+
+
+############ create new secret only when create_sftp_secrets = true ############
+
+resource "aws_secretsmanager_secret" "lambda_ssh_secret" {
+  count      = local.create_lambda_ssh_secret ? 1 : 0
+  name       = var.sftp_secret_name
+  kms_key_id = local.kms_key_arn_local
+  tags       = local.tags_local
+}
+
+resource "aws_secretsmanager_secret_version" "lambda_ssh_secret_ver" {
+  count       = local.create_lambda_ssh_secret ? 1 : 0
+  secret_id   = aws_secretsmanager_secret.lambda_ssh_secret[0].id
+  secret_string = jsonencode({
+    ssh_key = file(var.ssh_key)
+  })
+}
+
+
+############ lambda ############
+
+resource "aws_lambda_function" "lambda" {
+  function_name = var.function_name
+  handler       = var.handler
+  runtime       = var.runtime
+  filename      = data.archive_file.lambda_zip.output_path
+  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+
+  role        = local.lambda_role_arn_local
+  tags        = local.tags_local
+  kms_key_arn = local.kms_key_arn_local
+
+  environment {
+    variables = local.final_env_vars
+  }
+}
