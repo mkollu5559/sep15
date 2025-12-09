@@ -1,0 +1,3 @@
+AMI_ID=$(aws ec2 describe-images --owners self --filters "Name=name,Values=<AMI_NAME>" --query "Images[0].ImageId" --output text)
+
+aws ec2 deregister-image --image-id "$AMI_ID"
