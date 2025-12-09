@@ -1,0 +1,37 @@
+variable "secondary_tg_names" {
+  type    = list(string)
+  default = []
+}
+
+locals {
+  do_secondary = length(var.secondary_tg_names) > 0
+
+  all_instances = [
+    var.instance_qmgr_inst_la_id,
+    var.instance_qmgr_inst_lb_id,
+    var.instance_qmgr_inst_lc_id
+  ]
+}
+
+data "aws_lb_target_group" "secondary" {
+  for_each = local.do_secondary ? toset(var.secondary_tg_names) : {}
+  name     = each.value
+}
+
+resource "aws_lb_target_group_attachment" "secondary_attach" {
+  for_each = local.do_secondary ? {
+    for tg_name, tg in data.aws_lb_target_group.secondary :
+    tg_name => tg.arn
+  } : {}
+
+  target_group_arn = each.value
+
+  # loop each instance (la/lb/lc) dynamically
+  dynamic "attachment" {
+    for_each = local.all_instances
+    content {
+      target_id = attachment.value
+      port      = tonumber(var.qmgrPortNbr)
+    }
+  }
+}
